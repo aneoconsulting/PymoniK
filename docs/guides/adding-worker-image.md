@@ -19,7 +19,7 @@ You can add a new worker image to your ArmoniK cluster by creating a partition, 
     # ArmoniK workers
     worker = [
       {
-        image = "harmonic_snake"
+        image = "dockerhubaneo/harmonic_snake"
         tag   = "python-YOUR_PYTHON_VERSION-PYMONIK_VERSION_TO_USE" #(2)!
         limits = {
           cpu    = "1000m"
