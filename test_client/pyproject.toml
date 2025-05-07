@@ -1,0 +1,14 @@
+[project]
+name = "test-client"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10.12"
+dependencies = [
+    "debugpy>=1.8.14",
+    "numpy>=2.2.5",
+    "pymonik",
+]
+
+[tool.uv.sources]
+pymonik = { path = "../pymonik", editable = true }

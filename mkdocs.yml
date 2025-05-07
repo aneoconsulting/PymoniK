@@ -1,0 +1,34 @@
+site_name: PymoniK
+nav: 
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - FAQ: important-considerations.md
+  - Development:
+      - Development: development/development.md
+      - Contributing: development/contribution.md
+  - Examples: 
+      - Pi Estimation: examples/monte_carlo.md
+      - Training an AI to play Pong: examples/pong_training.md
+repo_url: https://github.com/aneoconsulting/PymoniK
+repo_name: aneoconsulting/PymoniK
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - attr_list
+  - md_in_html
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+plugins:
+  - social
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.code.annotate 
+    - content.tooltips
+  palette:
+    primary: orange
+    accent: red

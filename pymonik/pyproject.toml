@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pymonik"
+version = "0.1.3"
+description = "Lightweight Distributed Computing Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "armonik>=3.25.0",
+    "cloudpickle>=3.1.1",
+    "grpcio",
+    "pyyaml>=6.0.2",
+]
+
+[tool.setuptools]
+py-modules = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.6",
+]
+
