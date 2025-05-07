@@ -23,6 +23,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
+          platforms: linux/amd64,linux/arm64
           file: pymonik_worker/Dockerfile
           push: true
           build-args: "USE_PYTHON_VERSION=${{ matrix.python_version }}"
