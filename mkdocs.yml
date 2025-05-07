@@ -27,7 +27,11 @@ markdown_extensions:
       title: On this page
 plugins:
   - social:
-      cards_layout: default/invert
+      cards_layout_options: 
+        background_color: white
+        logo: assets/logo-aneo.svg
+        title: PymoniK
+        description: A Python framework for distributed computing
 extra:
   homepage: https://www.aneo.eu/
 theme:
