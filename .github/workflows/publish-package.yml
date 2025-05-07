@@ -20,9 +20,12 @@ jobs:
 
       - name: Set up Python
         run: uv python install 3.10.12  # 
+        working-directory: pymonik
 
       - name: Build
         run: uv build
+        working-directory: pymonik
 
       - name: Publish
         run: uv publish -t ${{ secrets.PYPI_TOKEN }}
+        working-directory: pymonik
