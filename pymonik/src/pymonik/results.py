@@ -15,7 +15,7 @@ class ResultHandle(Generic[T]):
 
     def wait(self) -> "ResultHandle[T]":
         """Wait for the result to be available."""
-        if self._pymonik.is_worker:
+        if self._pymonik.is_worker():
             raise RuntimeError(
                 "Cannot wait for result in worker context. Use the client context instead."
             )

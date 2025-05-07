@@ -172,10 +172,13 @@ def vec_add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 You might happen into scenarios where you'd like to store an object in your ArmoniK cluster and reuse it throughout. For that, you can `put_object` it 
 
 ```py
-df = pd.read_csv("some_data.csv") # (1)
-df_handle = put_object(df) # (2)
-some_operation.invoke(df_handle) # (3)
-some_other_operation.invoke(df_handle)
+from pymonik import ResultHandle
+
+with Pymonik() as pymonik:
+    df = pd.read_csv("some_data.csv") #(1)!
+    df_handle: ResultHandle[pd.Dataframe] = pymonik.put(df) #(2)!
+    some_operation.invoke(df_handle) #(3)!
+    some_other_operation.invoke(df_handle)
 ```
 
 1. Dataframe is read locally.
@@ -183,6 +186,12 @@ some_other_operation.invoke(df_handle)
 3. Invoke multiple operations on the ArmoniK cluster that reuse the same dataframe.
 
 This is really useful for larger objects because it minimizes transfer time to the cluster, moreover, you might be able to benefit from worker level caching whenever it's implemented.   
+
+
+!!! warning
+
+    You're not required to do this for every object that you're dealing with, you can just pass everything into your tasks and ArmoniK will take care of everything; `pymonik.put` is just an additional optimization when you're reusing the same object over and over again (same object being passed over to multiple tasks). 
+    If you end up modifying your object after the put then PymoniK will not synchronize these changes over to the workers. It's better to think of the sent objects as constants in that sense to avoid making mistakes.
 
 ## Connecting to ArmoniK
 

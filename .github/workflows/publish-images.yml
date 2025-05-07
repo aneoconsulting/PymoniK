@@ -26,4 +26,4 @@ jobs:
           file: pymonik_worker/Dockerfile
           push: true
           build-args: "USE_PYTHON_VERSION=${{ matrix.python_version }}"
-          tags: aneoconsulting/harmonic_snake:python-${{ matrix.python_version }}-${{github.ref_name}}
+          tags: dockerhubaneo/harmonic_snake:python-${{ matrix.python_version }}-${{github.ref_name}}

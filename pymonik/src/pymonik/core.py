@@ -72,7 +72,7 @@ class Task(Generic[P_Args, R_Type]):
                 )
         # Handle the case of multiple tasks
         result_handles: List[ResultHandle[R_Type]] = self._invoke_multiple(args_list, pymonik, delegate)
-        return MultiResultHandle[R_Type](result_handles)
+        return MultiResultHandle(result_handles)
 
     def __call__(self, *args, **kwds):
         return self.func(*args, **kwds)
@@ -712,3 +712,20 @@ class Pymonik:
             self._sigint_handler_set = False
         self.close()
         return False
+
+def task(
+    _func: Optional[Callable[P_Args,R_Type]] = None,
+    *,
+    require_context: bool = False,
+    function_name: Optional[str] = None,
+) -> Union[Callable, Task]:
+    def decorator(func: Callable[P_Args,R_Type]) -> Task[P_Args,R_Type]:
+        resolved_name = function_name or func.__name__
+        return Task[P_Args,R_Type](func, require_context=require_context, func_name=resolved_name)
+
+    if _func is None:
+        # Case 1: Called with arguments - @task(...)
+        return decorator
+    else:
+        # Case 2: Called without arguments - @task
+        return decorator(_func)

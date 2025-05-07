@@ -2,13 +2,16 @@ site_name: PymoniK
 nav: 
   - Home: index.md
   - Getting Started: getting-started.md
-  - FAQ: important-considerations.md
-  - Development:
-      - Developer's Guide: development/development.md
-      - Contributing: development/contribution.md
+  - Guides:
+      - Adding a new worker image to ArmoniK: guides/adding-worker-image.md
+      - Using a custom worker image: guides/custom-worker.md
   - Examples: 
       - Pi Estimation: examples/monte_carlo.md
       - Training an AI to play Pong: examples/pong_training.md
+  - Development:
+      - Developer's Guide: development/development.md
+      - Contributing: development/contribution.md
+  - FAQ: important-considerations.md
 repo_url: https://github.com/aneoconsulting/PymoniK
 repo_name: aneoconsulting/PymoniK
 site_url: https://aneoconsulting.github.io/PymoniK/

@@ -5,7 +5,7 @@ if __name__ == "__main__":
     print("PymoniK client running..")
     with pymonik:
         try:
-            my_task = Task(lambda a, b: a+b, name="add")
+            my_task = Task(lambda a, b: a+b, func_name="add")
             result = my_task.invoke(1, 2).wait().get()
             print(f"Result of add task: {result}")
         except Exception as e:

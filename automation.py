@@ -59,11 +59,28 @@ def cli():
     help="Build context path for Docker.",
 )
 @click.option(
+    "--refresh-namespace",
+    default="armonik",
+    show_default=True,
+    help="Namespace to use when refreshing the image used in the kubernetes deployment. Useful during development." 
+)
+@click.option(
+    "--refresh-partition",
+    default="pymonik",
+    show_default=True,
+    help="Partition to use when refreshing the image used in the kubernetes deployment. Useful during development." 
+)
+@click.option(
+    "--refresh",
+    is_flag=True,
+    help="Refresh the image used in the kubernetes deployment.",
+)
+@click.option(
     "--push",
     is_flag=True,
     help="Push the image to Docker Hub after a successful build.",
 )
-def build_docker(image_name: str, python_version: str, dockerfile_path: str, context_path: str, push: bool):
+def build_docker(image_name: str, python_version: str, dockerfile_path: str, context_path: str, refresh_namespace:str, refresh_partition:str, refresh:bool, push: bool):
     """
     Builds a Docker image.
 
@@ -108,6 +125,29 @@ def build_docker(image_name: str, python_version: str, dockerfile_path: str, con
     except FileNotFoundError:
         click.secho("Error: Docker command not found. Is Docker installed and in your PATH?", fg="red")
         raise click.Abort()
+    
+    if refresh:
+        click.secho(f"Refreshing image used in the kubernetes deployment...", fg="cyan")
+        refresh_command = [
+            "kubectl",
+            "rollout",
+            "restart",
+            f"deployment/compute-plane-{refresh_partition}",
+            "--namespace",
+            refresh_namespace,
+        ]
+        try:
+            click.secho(f"Running command: {' '.join(refresh_command)}", fg="yellow")
+            subprocess.run(refresh_command, check=True)
+            click.secho(f"Image '{image_name}' refreshed successfully in the kubernetes deployment.", fg="green")
+        except subprocess.CalledProcessError as e:
+            click.secho(f"Error during kubernetes operation: {e}", fg="red")
+            click.secho(f"Command output:\n{e.stdout}\n{e.stderr}", fg="red")
+            raise click.Abort()
+        except FileNotFoundError:
+            click.secho("Error: kubectl command not found. Is kubectl installed and in your PATH?", fg="red")
+            raise click.Abort()
+    click.secho("Refreshed image.", fg="green")
 
 
 @cli.command("serve-docs")
