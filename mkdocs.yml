@@ -8,6 +8,7 @@ nav:
   - Examples: 
       - Pi Estimation: examples/monte_carlo.md
       - Training an AI to play Pong: examples/pong_training.md
+      - Raytracing: examples/raytracing.md
   - Development:
       - Developer's Guide: development/development.md
       - Contributing: development/contribution.md
