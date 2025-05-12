@@ -86,7 +86,7 @@ def add(a, b):
 def multiply(a,b):
     return a*b
 
-with Pymonik(endpoint="localhost:5001", environment={"pip":["numpy"]}): # (1) 
+with Pymonik(endpoint="localhost:5001", environment={"pip":["numpy"]}): #(1) 
     intermediate_result = add.invoke(np.array([1,2,3]), np.array([2,1,0])) 
     final_result = multiply.invoke(intermediate_result, 2).wait().get()
     print(final_result)
@@ -113,7 +113,7 @@ def sum_arrays(arrays):
     return np.sum(arrays)
 
 with Pymonik(endpoint="localhost:5001", environment={"pip":["numpy"]}):
-    intermediate_result = add.map_invoke( # (1)
+    intermediate_result = add.map_invoke( #(1)
         [(np.random.randint(0,10, size=(3,3)) ,np.random.randint(0,10, size=(3,3))) for _ in range(10)]
     ) 
     final_result = sum_arrays.invoke(intermediate_result).wait().get()
@@ -145,9 +145,9 @@ with Pymonik(endpoint="localhost:5001", environment={"pip":["numpy"]}):
     intermediate_result = add.map_invoke( 
         [(np.random.randint(0,10, size=(3,3)) ,np.random.randint(0,10, size=(3,3))) for _ in range(10)]
     ) 
-    partial_final_1 = sum_arrays.invoke(intermediate_result[:5]) # (1)
-    partial_final_2 = sum_arrays(intermediate_result[5:].wait().get()) # (2)
-    final_result = add(partial_final_1.wait().get(), partial_final_2) # (3)
+    partial_final_1 = sum_arrays.invoke(intermediate_result[:5]) #(1)
+    partial_final_2 = sum_arrays(intermediate_result[5:].wait().get()) #(2)
+    final_result = add(partial_final_1.wait().get(), partial_final_2) #(3)
     print(final_result)
 
 ```
@@ -205,11 +205,11 @@ This environment variables points to a config file that contains everything need
 If you want to connect to multiple Armonik clusters, the invoke methods can accept a pymonik client argument. Which allows you to do something like:
 
 ```py
-pymonik1 = Pymonik( """""" ) # (1)
-pymonik2 = Pymonik( """""" ) # (2)
+pymonik1 = Pymonik( """""" ) #(1)
+pymonik2 = Pymonik( """""" ) #(2)
 
-my_task.invoke(arg1, arg2, pymonik=pymonik1) # (3)
-my_task.invoke(arg1, arg2, pymonik=pymonik2) # (4)
+my_task.invoke(arg1, arg2, pymonik=pymonik1) #(3)
+my_task.invoke(arg1, arg2, pymonik=pymonik2) #(4)
 ```
 
 1. Specify the connection options and environment configuration for your first cluster.
