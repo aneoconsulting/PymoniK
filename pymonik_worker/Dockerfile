@@ -10,17 +10,21 @@ RUN groupadd --gid 5000 armonikuser && \
     mkdir /cache && \
     chown armonikuser: /cache && \
     chown -R armonikuser: /app 
+    
+
+COPY --chown=armonikuser:armonikuser pymonik /pymonik 
 
 USER armonikuser
 
-COPY pymonik /pymonik 
     
 RUN echo "Writing Python version: $USE_PYTHON_VERSION" && echo "$USE_PYTHON_VERSION" >> .python-version
 RUN cat .python-version 
 
 COPY pymonik_worker/pyproject.toml . 
 
-# We can preinstall packages this way (this is what I meant the other day so that startup is immediate)
+RUN sed -i 's/source = "uv-dynamic-versioning"/source = "env"/' /pymonik/pyproject.toml
+ENV PYMONIK_BUILD_VERSION="0.0.0"
+
 RUN uv sync 
 
 # Copy application code
