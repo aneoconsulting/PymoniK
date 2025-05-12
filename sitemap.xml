@@ -2,38 +2,42 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/getting-started/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/important-considerations/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/development/contribution/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/development/development/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/examples/monte_carlo/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/examples/pong_training/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
+    </url>
+    <url>
+         <loc>https://aneoconsulting.github.io/PymoniK/examples/raytracing/</loc>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/guides/adding-worker-image/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
     <url>
          <loc>https://aneoconsulting.github.io/PymoniK/guides/custom-worker/</loc>
-         <lastmod>2025-05-07</lastmod>
+         <lastmod>2025-05-12</lastmod>
     </url>
 </urlset>
