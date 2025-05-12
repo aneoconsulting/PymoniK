@@ -10,11 +10,11 @@ We're using `uv` throughout the project, so please make sure that you have it in
 
 The test client contains some basic examples of working with PymoniK, PymoniK is installed in editable mode `uv add ../pymonik --editable`, it's useful to just create a python file there for testing and then `uv run`ning it to quickly iterate on PymoniK. Keep in mind that if you make changes that affect how the worker functions (obviously like making a change to the `worker.py` file), you'll have to reload the worker image. You can do this by running the following command:
 
-```
-kubectl rollout restart deployment/compute-plane-pymonik #(1)! -n armonik #(2)!
+```bash
+kubectl rollout restart deployment/compute-plane-pymonik #(1) -n armonik #(2)
 ```
 
-1. This should be compute-plane-<NAME OF YOUR PYMONIK PARTITION>. 
+1. This should be compute-plane-(NAME OF YOUR PYMONIK PARTITION). 
 2. If you're deploying locally the namespace is typically armonik, otherwise use the namespace of your kubernetes cluster
 
 

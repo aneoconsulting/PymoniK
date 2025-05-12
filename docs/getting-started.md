@@ -2,11 +2,11 @@
 
 - We'll be using `uv` as our Python project manager, so if you haven't installed it yet, follow the instructions [here](https://docs.astral.sh/uv/getting-started/installation/).
 
-- Moreover, we assume that you have a partition in your Armonik cluster with the name `pymonik` and that is using a pymonik worker image. You can either build your own or use the pre-prepared one for Python 3.10.12: `ineedzesleep/harmonic_snake`. If your partition is named differently then you need to pass in the name of the partition to Pymonik.
+- Moreover, we assume that you have a partition in your Armonik cluster with the name `pymonik` and that is using a pymonik worker image. You can either build your own or use the pre-prepared one for Python 3.10.12 (Python 3.10 should work just as well): `ineedzesleep/harmonic_snake`. If your partition is named differently then you need to pass in the name of the partition to Pymonik.
 
-    ```py
-    pymonik = Pymonik(partition="my_pymonik_partition")
-    ```
+```py
+pymonik = Pymonik(partition="my_pymonik_partition")
+```
 
 ## Creating a new project
 
@@ -156,7 +156,25 @@ with Pymonik(endpoint="localhost:5001", environment={"pip":["numpy"]}):
 2. I retrieve the other half of the results and run this part of the computation locally. 
 3. I retrieve partial_final_1 and add the results locally
 
+## Anonymous Tasks
 
+You can create tasks from lambda functions by directly creating a Task object, for instance: 
+
+```py
+add_task = Task(lambda a, b: a+b, func_name="add") 
+add_task.map_invoke([(1,2), (1,3)])
+```
+
+!!! warning
+    
+    Please note that when creating anonymous tasks using lambda functions, it's imperative that you give it a name on your own. 
+
+
+Anonymous tasks are particularly useful when you want to "armonikize" code from other Python packages. For instance:
+
+```py
+numpy_sum = Task(np.sum)
+```
 ## Subtasking
 
 Subtasking is an ArmoniK feature that allows you to dynamically change your task graph based mid-task execution. This is best illustrated with the following scenario. Say we've implemented a vector addition task as follows: 
@@ -167,9 +185,60 @@ def vec_add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return a + b
 ```
 
+One way to enhance this operation through subtasking is by making it so the `vec_add` task checks the size of the vectors to add. If the size is bigger than a certain threshold, then we can split the input into two parts and then invoke the same task for these smaller inputs. 
+
+Here is a sample code for this (check `test_client/adaptive_vector_addition.py` for the full example)
+
+```py
+VECTOR_SIZE_THRESHOLD = 512
+
+@task
+def aggregate_results(result_1, result_2) -> np.ndarray:
+    return np.concatenate([result_1, result_2])
+
+@task
+def vec_add(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    if a.size > VECTOR_SIZE_THRESHOLD:
+        mid_point = a.size // 2 #(1)!
+        a1, a2 = np.split(a, [mid_point])
+        b1, b2 = np.split(b, [mid_point])
+
+        result_handle1 = vec_add.invoke(a1, b1) #(2)!
+        result_handle2 = vec_add.invoke(a2, b2)
+
+        return aggregate_results.invoke(result_handle1, result_handle2, delegate=True) #(3)!
+    else:
+        return a + b #(4)!
+```
+
+1. Split vectors into two chunks, ideally you'd have a chunk size and you'd split into miltiple chunks. A half-way split was chosen here to highlight subtasking.
+2. We invoke the `vec_add` task for each split. Note that you cannot wait or get there task results here. As Armonik's design philosophy is centered around workers being ephemeral. We can still invoke other tasks that make use of these results.
+3. Aggregate the results using the aggregate_results task. We directly use the result handles from the sub-tasks that were invoked. The `delegate=True` basically tells ArmoniK that the result of vec_add will be the result of this task. So on the user side of things, you don't get a ResultHandle wrapped around a ResultHandle. This is sub-tasking. The result of the parent task will be set to the result of the delegated sub-task. 
+4. If the vectors are of adequate size, we sum them up as usual and return their value.
+
+There is another much simpler example of subtasking in `test_client/subtasking.py`
+
+
+## Context
+
+Sometimes, you might want to log messages from your tasks. To do that, you can add a `PymonikContext` to your task :
+
+```py
+@task(require_context=True)
+def my_task(ctx):
+    ctx.logger.info("This is an info log")
+    ctx.logger.error("This is an error log", my_keyword="hello from pymonik") #(1)!
+```
+
+1. I can add additional information/metadata to display on Seq. 
+
+You can also use the context to access the current environment, and in particular to install packages in that specific task. Although this isn't recommended as it will just cause environment contamination. It's preferred to have a single environment that you define from your PymoniK client. 
+
+
+The context also gives you direct access to the task handler for that worker, if you ever feel the need to do more advanced work with the low level Python API for ArmoniK. (Not recommended)
 ## Storing objects in the cluster and reusing them
 
-You might happen into scenarios where you'd like to store an object in your ArmoniK cluster and reuse it throughout. For that, you can `put_object` it 
+You might happen into scenarios where you'd like to store an object in your ArmoniK cluster and reuse it throughout. For that, you can `put` it into the ArmoniK cluster.
 
 ```py
 from pymonik import ResultHandle
@@ -193,6 +262,10 @@ This is really useful for larger objects because it minimizes transfer time to t
     You're not required to do this for every object that you're dealing with, you can just pass everything into your tasks and ArmoniK will take care of everything; `pymonik.put` is just an additional optimization when you're reusing the same object over and over again (same object being passed over to multiple tasks). 
     If you end up modifying your object after the put then PymoniK will not synchronize these changes over to the workers. It's better to think of the sent objects as constants in that sense to avoid making mistakes.
 
+
+There is also a `put_many` if you want to store multiple objects at the same time. (This is more efficient than looping through a list of objects and `put`-ing them individually).
+
+You can also give your object a name, this makes it easy to see the objects you're putting when looking through the ArmoniK dashboard or if you want to search for it in the ArmoniK.CLI. 
 ## Connecting to ArmoniK
 
 If you've deployed ArmoniK on your own, you should've been prompted to run a command for setting the `AKCONFIG` environment variable.
