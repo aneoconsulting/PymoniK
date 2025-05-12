@@ -1,10 +1,13 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
 
 [project]
 name = "pymonik"
-version = "0.1.6"
+dynamic = ["version"]
 description = "Lightweight Distributed Computing Framework"
 readme = "README.md"
 requires-python = ">=3.10"
