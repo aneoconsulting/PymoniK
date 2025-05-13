@@ -18,7 +18,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.12">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.13">
     
     
       
@@ -26,7 +26,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.2afb09e1.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
@@ -304,9 +304,27 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#anonymous-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Anonymous Tasks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#subtasking" class="md-nav__link">
     <span class="md-ellipsis">
       Subtasking
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context
     </span>
   </a>
   
@@ -703,9 +721,27 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#anonymous-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Anonymous Tasks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#subtasking" class="md-nav__link">
     <span class="md-ellipsis">
       Subtasking
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context
     </span>
   </a>
   
@@ -754,11 +790,11 @@
 <p>We'll be using <code>uv</code> as our Python project manager, so if you haven't installed it yet, follow the instructions <a href="https://docs.astral.sh/uv/getting-started/installation/">here</a>.</p>
 </li>
 <li>
-<p>Moreover, we assume that you have a partition in your Armonik cluster with the name <code>pymonik</code> and that is using a pymonik worker image. You can either build your own or use the pre-prepared one for Python 3.10.12: <code>ineedzesleep/harmonic_snake</code>. If your partition is named differently then you need to pass in the name of the partition to Pymonik.</p>
-<div class="language-py highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">pymonik</span> <span class="o">=</span> <span class="n">Pymonik</span><span class="p">(</span><span class="n">partition</span><span class="o">=</span><span class="s2">&quot;my_pymonik_partition&quot;</span><span class="p">)</span>
-</span></code></pre></div>
+<p>Moreover, we assume that you have a partition in your Armonik cluster with the name <code>pymonik</code> and that is using a pymonik worker image. You can either build your own or use the pre-prepared one for Python 3.10.12 (Python 3.10 should work just as well): <code>ineedzesleep/harmonic_snake</code>. If your partition is named differently then you need to pass in the name of the partition to Pymonik.</p>
 </li>
 </ul>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">pymonik</span> <span class="o">=</span> <span class="n">Pymonik</span><span class="p">(</span><span class="n">partition</span><span class="o">=</span><span class="s2">&quot;my_pymonik_partition&quot;</span><span class="p">)</span>
+</span></code></pre></div>
 <h2 id="creating-a-new-project">Creating a new project<a class="headerlink" href="#creating-a-new-project" title="Permanent link">&para;</a></h2>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mkdir<span class="w"> </span>hello_pymonik<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="nb">cd</span><span class="w"> </span>hello_pymonik
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>uv<span class="w"> </span>init<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.10.12
@@ -877,21 +913,74 @@
 <li>I retrieve the other half of the results and run this part of the computation locally. </li>
 <li>I retrieve partial_final_1 and add the results locally</li>
 </ol>
+<h2 id="anonymous-tasks">Anonymous Tasks<a class="headerlink" href="#anonymous-tasks" title="Permanent link">&para;</a></h2>
+<p>You can create tasks from lambda functions by directly creating a Task object, for instance: </p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">add_task</span> <span class="o">=</span> <span class="n">Task</span><span class="p">(</span><span class="k">lambda</span> <span class="n">a</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n">a</span><span class="o">+</span><span class="n">b</span><span class="p">,</span> <span class="n">func_name</span><span class="o">=</span><span class="s2">&quot;add&quot;</span><span class="p">)</span> 
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="n">add_task</span><span class="o">.</span><span class="n">map_invoke</span><span class="p">([(</span><span class="mi">1</span><span class="p">,</span><span class="mi">2</span><span class="p">),</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">3</span><span class="p">)])</span>
+</span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Please note that when creating anonymous tasks using lambda functions, it's imperative that you give it a name on your own. </p>
+</div>
+<p>Anonymous tasks are particularly useful when you want to "armonikize" code from other Python packages. For instance:</p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">numpy_sum</span> <span class="o">=</span> <span class="n">Task</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">)</span>
+</span></code></pre></div>
 <h2 id="subtasking">Subtasking<a class="headerlink" href="#subtasking" title="Permanent link">&para;</a></h2>
 <p>Subtasking is an ArmoniK feature that allows you to dynamically change your task graph based mid-task execution. This is best illustrated with the following scenario. Say we've implemented a vector addition task as follows: </p>
-<div class="language-py highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nd">@task</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">vec_add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nd">@task</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">vec_add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>    <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
 </span></code></pre></div>
+<p>One way to enhance this operation through subtasking is by making it so the <code>vec_add</code> task checks the size of the vectors to add. If the size is bigger than a certain threshold, then we can split the input into two parts and then invoke the same task for these smaller inputs. </p>
+<p>Here is a sample code for this (check <code>test_client/adaptive_vector_addition.py</code> for the full example)</p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">VECTOR_SIZE_THRESHOLD</span> <span class="o">=</span> <span class="mi">512</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="nd">@task</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="k">def</span><span class="w"> </span><span class="nf">aggregate_results</span><span class="p">(</span><span class="n">result_1</span><span class="p">,</span> <span class="n">result_2</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">([</span><span class="n">result_1</span><span class="p">,</span> <span class="n">result_2</span><span class="p">])</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="nd">@task</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="k">def</span><span class="w"> </span><span class="nf">vec_add</span><span class="p">(</span><span class="n">a</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">,</span> <span class="n">b</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>    <span class="k">if</span> <span class="n">a</span><span class="o">.</span><span class="n">size</span> <span class="o">&gt;</span> <span class="n">VECTOR_SIZE_THRESHOLD</span><span class="p">:</span>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a>        <span class="n">mid_point</span> <span class="o">=</span> <span class="n">a</span><span class="o">.</span><span class="n">size</span> <span class="o">//</span> <span class="mi">2</span> <span class="c1">#(1)!</span>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a>        <span class="n">a1</span><span class="p">,</span> <span class="n">a2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="p">[</span><span class="n">mid_point</span><span class="p">])</span>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>        <span class="n">b1</span><span class="p">,</span> <span class="n">b2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="p">[</span><span class="n">mid_point</span><span class="p">])</span>
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a>
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>        <span class="n">result_handle1</span> <span class="o">=</span> <span class="n">vec_add</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">a1</span><span class="p">,</span> <span class="n">b1</span><span class="p">)</span> <span class="c1">#(2)!</span>
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>        <span class="n">result_handle2</span> <span class="o">=</span> <span class="n">vec_add</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">a2</span><span class="p">,</span> <span class="n">b2</span><span class="p">)</span>
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a>        <span class="k">return</span> <span class="n">aggregate_results</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">result_handle1</span><span class="p">,</span> <span class="n">result_handle2</span><span class="p">,</span> <span class="n">delegate</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span> <span class="c1">#(3)!</span>
+</span><span id="__span-12-18"><a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a>    <span class="k">else</span><span class="p">:</span>
+</span><span id="__span-12-19"><a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a>        <span class="k">return</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span> <span class="c1">#(4)!</span>
+</span></code></pre></div>
+<ol>
+<li>Split vectors into two chunks, ideally you'd have a chunk size and you'd split into miltiple chunks. A half-way split was chosen here to highlight subtasking.</li>
+<li>We invoke the <code>vec_add</code> task for each split. Note that you cannot wait or get there task results here. As Armonik's design philosophy is centered around workers being ephemeral. We can still invoke other tasks that make use of these results.</li>
+<li>Aggregate the results using the aggregate_results task. We directly use the result handles from the sub-tasks that were invoked. The <code>delegate=True</code> basically tells ArmoniK that the result of vec_add will be the result of this task. So on the user side of things, you don't get a ResultHandle wrapped around a ResultHandle. This is sub-tasking. The result of the parent task will be set to the result of the delegated sub-task. </li>
+<li>If the vectors are of adequate size, we sum them up as usual and return their value.</li>
+</ol>
+<p>There is another much simpler example of subtasking in <code>test_client/subtasking.py</code></p>
+<h2 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h2>
+<p>Sometimes, you might want to log messages from your tasks. To do that, you can add a <code>PymonikContext</code> to your task :</p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="nd">@task</span><span class="p">(</span><span class="n">require_context</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="k">def</span><span class="w"> </span><span class="nf">my_task</span><span class="p">(</span><span class="n">ctx</span><span class="p">):</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>    <span class="n">ctx</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;This is an info log&quot;</span><span class="p">)</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>    <span class="n">ctx</span><span class="o">.</span><span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s2">&quot;This is an error log&quot;</span><span class="p">,</span> <span class="n">my_keyword</span><span class="o">=</span><span class="s2">&quot;hello from pymonik&quot;</span><span class="p">)</span> <span class="c1">#(1)!</span>
+</span></code></pre></div>
+<ol>
+<li>I can add additional information/metadata to display on Seq. </li>
+</ol>
+<p>You can also use the context to access the current environment, and in particular to install packages in that specific task. Although this isn't recommended as it will just cause environment contamination. It's preferred to have a single environment that you define from your PymoniK client. </p>
+<p>The context also gives you direct access to the task handler for that worker, if you ever feel the need to do more advanced work with the low level Python API for ArmoniK. (Not recommended)</p>
 <h2 id="storing-objects-in-the-cluster-and-reusing-them">Storing objects in the cluster and reusing them<a class="headerlink" href="#storing-objects-in-the-cluster-and-reusing-them" title="Permanent link">&para;</a></h2>
-<p>You might happen into scenarios where you'd like to store an object in your ArmoniK cluster and reuse it throughout. For that, you can <code>put_object</code> it </p>
-<div class="language-py highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pymonik</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResultHandle</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">with</span> <span class="n">Pymonik</span><span class="p">()</span> <span class="k">as</span> <span class="n">pymonik</span><span class="p">:</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="s2">&quot;some_data.csv&quot;</span><span class="p">)</span> <span class="c1">#(1)!</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">df_handle</span><span class="p">:</span> <span class="n">ResultHandle</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">Dataframe</span><span class="p">]</span> <span class="o">=</span> <span class="n">pymonik</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">df</span><span class="p">)</span> <span class="c1">#(2)!</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>    <span class="n">some_operation</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">df_handle</span><span class="p">)</span> <span class="c1">#(3)!</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="n">some_other_operation</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">df_handle</span><span class="p">)</span>
+<p>You might happen into scenarios where you'd like to store an object in your ArmoniK cluster and reuse it throughout. For that, you can <code>put</code> it into the ArmoniK cluster.</p>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pymonik</span><span class="w"> </span><span class="kn">import</span> <span class="n">ResultHandle</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="k">with</span> <span class="n">Pymonik</span><span class="p">()</span> <span class="k">as</span> <span class="n">pymonik</span><span class="p">:</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="s2">&quot;some_data.csv&quot;</span><span class="p">)</span> <span class="c1">#(1)!</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>    <span class="n">df_handle</span><span class="p">:</span> <span class="n">ResultHandle</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">Dataframe</span><span class="p">]</span> <span class="o">=</span> <span class="n">pymonik</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">df</span><span class="p">)</span> <span class="c1">#(2)!</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>    <span class="n">some_operation</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">df_handle</span><span class="p">)</span> <span class="c1">#(3)!</span>
+</span><span id="__span-14-7"><a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>    <span class="n">some_other_operation</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">df_handle</span><span class="p">)</span>
 </span></code></pre></div>
 <ol>
 <li>Dataframe is read locally.</li>
@@ -904,17 +993,19 @@
 <p>You're not required to do this for every object that you're dealing with, you can just pass everything into your tasks and ArmoniK will take care of everything; <code>pymonik.put</code> is just an additional optimization when you're reusing the same object over and over again (same object being passed over to multiple tasks). 
 If you end up modifying your object after the put then PymoniK will not synchronize these changes over to the workers. It's better to think of the sent objects as constants in that sense to avoid making mistakes.</p>
 </div>
+<p>There is also a <code>put_many</code> if you want to store multiple objects at the same time. (This is more efficient than looping through a list of objects and <code>put</code>-ing them individually).</p>
+<p>You can also give your object a name, this makes it easy to see the objects you're putting when looking through the ArmoniK dashboard or if you want to search for it in the ArmoniK.CLI. </p>
 <h2 id="connecting-to-armonik">Connecting to ArmoniK<a class="headerlink" href="#connecting-to-armonik" title="Permanent link">&para;</a></h2>
 <p>If you've deployed ArmoniK on your own, you should've been prompted to run a command for setting the <code>AKCONFIG</code> environment variable.</p>
-<p><div class="language-sh highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AKCONFIG</span><span class="o">=</span>...
+<p><div class="language-sh highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">AKCONFIG</span><span class="o">=</span>...
 </span></code></pre></div>
 This environment variables points to a config file that contains everything needed to connect to this cluster. If you set it before executing your client, then you can just write <code>pymonik=Pymonik()</code> and it'll connect automatically to the exported Armonik cluster. </p>
 <p>If you want to connect to multiple Armonik clusters, the invoke methods can accept a pymonik client argument. Which allows you to do something like:</p>
-<div class="language-py highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="n">pymonik1</span> <span class="o">=</span> <span class="n">Pymonik</span><span class="p">(</span> <span class="s2">&quot;&quot;&quot;&quot;&quot;&quot;</span> <span class="p">)</span> <span class="c1">#(1)</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="n">pymonik2</span> <span class="o">=</span> <span class="n">Pymonik</span><span class="p">(</span> <span class="s2">&quot;&quot;&quot;&quot;&quot;&quot;</span> <span class="p">)</span> <span class="c1">#(2)</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">my_task</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">arg1</span><span class="p">,</span> <span class="n">arg2</span><span class="p">,</span> <span class="n">pymonik</span><span class="o">=</span><span class="n">pymonik1</span><span class="p">)</span> <span class="c1">#(3)</span>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">my_task</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">arg1</span><span class="p">,</span> <span class="n">arg2</span><span class="p">,</span> <span class="n">pymonik</span><span class="o">=</span><span class="n">pymonik2</span><span class="p">)</span> <span class="c1">#(4)</span>
+<div class="language-py highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">pymonik1</span> <span class="o">=</span> <span class="n">Pymonik</span><span class="p">(</span> <span class="s2">&quot;&quot;&quot;&quot;&quot;&quot;</span> <span class="p">)</span> <span class="c1">#(1)</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">pymonik2</span> <span class="o">=</span> <span class="n">Pymonik</span><span class="p">(</span> <span class="s2">&quot;&quot;&quot;&quot;&quot;&quot;</span> <span class="p">)</span> <span class="c1">#(2)</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">my_task</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">arg1</span><span class="p">,</span> <span class="n">arg2</span><span class="p">,</span> <span class="n">pymonik</span><span class="o">=</span><span class="n">pymonik1</span><span class="p">)</span> <span class="c1">#(3)</span>
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="n">my_task</span><span class="o">.</span><span class="n">invoke</span><span class="p">(</span><span class="n">arg1</span><span class="p">,</span> <span class="n">arg2</span><span class="p">,</span> <span class="n">pymonik</span><span class="o">=</span><span class="n">pymonik2</span><span class="p">)</span> <span class="c1">#(4)</span>
 </span></code></pre></div>
 <ol>
 <li>Specify the connection options and environment configuration for your first cluster.</li>
@@ -973,10 +1064,10 @@ This environment variables points to a config file that contains everything need
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "content.code.annotate", "content.tooltips"], "search": "../assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "content.code.annotate", "content.tooltips"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c8b220af.min.js"></script>
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
       
     
   </body>

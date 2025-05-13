@@ -18,7 +18,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.12">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.13">
     
     
       
@@ -26,7 +26,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.2afb09e1.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.342714a4.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
@@ -720,10 +720,10 @@
 <p>We're using <code>uv</code> throughout the project, so please make sure that you have it installed. You can refer to their <a href="https://docs.astral.sh/uv/getting-started/installation/">official <code>uv</code> installation guide</a> </p>
 <h2 id="test-client">Test client<a class="headerlink" href="#test-client" title="Permanent link">&para;</a></h2>
 <p>The test client contains some basic examples of working with PymoniK, PymoniK is installed in editable mode <code>uv add ../pymonik --editable</code>, it's useful to just create a python file there for testing and then <code>uv run</code>ning it to quickly iterate on PymoniK. Keep in mind that if you make changes that affect how the worker functions (obviously like making a change to the <code>worker.py</code> file), you'll have to reload the worker image. You can do this by running the following command:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>kubectl rollout restart deployment/compute-plane-pymonik #(1)! -n armonik #(2)!
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>kubectl<span class="w"> </span>rollout<span class="w"> </span>restart<span class="w"> </span>deployment/compute-plane-pymonik<span class="w"> </span><span class="c1">#(1) -n armonik #(2)</span>
 </span></code></pre></div>
 <ol>
-<li>This should be compute-plane-<NAME OF YOUR PYMONIK PARTITION>. </li>
+<li>This should be compute-plane-(NAME OF YOUR PYMONIK PARTITION). </li>
 <li>If you're deploying locally the namespace is typically armonik, otherwise use the namespace of your kubernetes cluster</li>
 </ol>
 <h2 id="automation-script-automationpy">Automation Script (<code>automation.py</code>)<a class="headerlink" href="#automation-script-automationpy" title="Permanent link">&para;</a></h2>
@@ -783,10 +783,10 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.code.annotate", "content.tooltips"], "search": "../../assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.code.annotate", "content.tooltips"], "search": "../../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c8b220af.min.js"></script>
+      <script src="../../assets/javascripts/bundle.13a4f30d.min.js"></script>
       
     
   </body>

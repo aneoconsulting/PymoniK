@@ -18,7 +18,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.12">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.13">
     
     
       
@@ -26,7 +26,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.2afb09e1.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.342714a4.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
@@ -96,6 +96,11 @@
     <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
+      
+        
+        <a href="#contributing" class="md-skip">
+          Skip to content
+        </a>
       
     </div>
     <div data-md-component="announce">
@@ -525,6 +530,21 @@
       <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
       
       
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Contributing
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
       
       <a href="./" class="md-nav__link md-nav__link--active">
         
@@ -537,6 +557,36 @@
   
 
       </a>
+      
+        
+
+  
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#open-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      Open Issues:
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -591,6 +641,25 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#open-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      Open Issues:
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -609,9 +678,25 @@
   
 
 
-  <h1>Contributing</h1>
-
-
+<h1 id="contributing">Contributing<a class="headerlink" href="#contributing" title="Permanent link">&para;</a></h1>
+<p>This doesn't differ from our other projects (<a href="https://github.com/aneoconsulting/ArmoniK.CLI/blob/main/CONTRIBUTING.md">Read ArmoniK.CLI's CONTRIBUTING.md</a>).</p>
+<h2 id="open-issues">Open Issues:<a class="headerlink" href="#open-issues" title="Permanent link">&para;</a></h2>
+<p>Here's a non-exhaustive list of things that are outright/partially missing from PymoniK that we'd like to see added in: </p>
+<ul>
+<li><strong>Unit tests, end-to-end tests</strong> : This project doesn't have any testing associated to it, 0% code coverage. We'd like to change this.</li>
+<li><strong>More sophisticated examples</strong> : We'd like to add even more examples and tutorials of common use cases that use ArmoniK under the hood.</li>
+<li><strong>PymoniK logger</strong> : The session created/closed/cancelled prints and the different errors should be logged instead of being printed.</li>
+<li><strong>Local PymoniK</strong> : Once of the big advantages of the way things have been coded is being able to switch from/to a remote/local context by just removing the <code>invoke</code> methods. This could be done even better, by adding a <code>local=True</code> flag to PymoniK that makes it so invokes are executed as regular function calls that run locally. The challenge is mainly handling <code>Pymonik.put</code>s and the map_invoke. </li>
+<li><strong>Rename <code>ResultHandle</code> to <code>ObjectHandle</code></strong> : The naming of <code>ResultHandle</code> was choosen because invocations return results, but as it turns out, these results are also then served as inputs. It'd be better for naming (especially since you can put things onto ArmoniK) to rename <code>ResultHandle</code> to the more generic <code>ObjectHandle</code>.</li>
+<li><strong>Cleaner sub-tasking</strong> : Subtasking requires the user to pass in a <code>delegate=True</code> flag to invokes, this isn't particularly clean or nice. There must be a better way of doing it. </li>
+<li><strong>Tasks returning multiple results</strong>: As of right now, a task can only return a single result object (even when you return a tuple). There should be support for cases where you'd like to return multiple results from a task and not have them be grouped up into one (multiple smaller objects being passed onto multiple tasks). We think this change would be easier to implement once sub-tasking is in place, since it also involves analyzing what the user will return. There should be pre-execution tests to check if the user is returning a different number of results in different branches of the task and that should result in a failure (invalid task). </li>
+<li><strong><code>results.as_completed</code></strong> : For more sophisticated and better time-to-execute, we'd like to implement a method for <code>MultiResultHandle</code> that allows the user to for instance loop through a <code>MultiResultHandle</code> and have the code execute as the result is done/retrieved. Moreover, as a side-effect, having this feature would allow for the usage of <code>tqdm</code> to create progress bars which is also really nice. </li>
+<li><strong>Intermediate Objects</strong> : Support being able to create/download ArmoniK Objects (Intermediate results) within tasks. The download part would require <code>GetDirectData</code> in the Python API.   </li>
+<li><strong>Remote to local error propagation</strong> : Supply an additional "error name" to created tasks, when a result creation fails, we create this result, locally we can retrieve the remote stack trace using <code>my_result.error()</code> if we try-except, either that are we enrich the local result failure grpc exception with the remote one. </li>
+<li><strong>Test JIT-ing</strong> : jitting tasks using namba/taichi if they're pure for additional performance. (Should just test if it'd work as intended..)</li>
+<li><strong>More sophisticated result deserialization</strong>: Right now it's just first-level depickling, it'd be nice to be able to pass in a dict that has ResultHandle values for example and be able to dynamically fetch those but that'd add a lot of complexity to data dependencies that'd need to be handled. There has to be a nice way of doing this and it's worth exploring</li>
+<li><strong>PymoniK Visualizer</strong>: With the current implementation of invoke/map_invoke, we can make it so you can surround your PymoniK context with a Grapher context that dynamically builds up a visualization of your task graph that you can then save and look at/analyze/vizualize later.  </li>
+</ul>
 
 
 
@@ -663,10 +748,10 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.code.annotate", "content.tooltips"], "search": "../../assets/javascripts/workers/search.f8cc74c7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy", "content.code.annotate", "content.tooltips"], "search": "../../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c8b220af.min.js"></script>
+      <script src="../../assets/javascripts/bundle.13a4f30d.min.js"></script>
       
     
   </body>
