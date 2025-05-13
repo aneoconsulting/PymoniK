@@ -181,10 +181,7 @@ if __name__ == "__main__":
 
 1.  Save the complete Python script (including helper classes and the PymoniK logic shown above) as a `.py` file (e.g., `distributed_raytracer.py`).
 2.  Ensure your ArmoniK cluster is running and accessible.
-3.  Set the environment variable `ARMONIK_ENDPOINT` if it's not the default `localhost:5001`.
-    ```bash
-    export ARMONIK_ENDPOINT="your_armonik_controller_ip:your_port"
-    ```
+3.  Either set the AKCONFIG to your ArmoniK deployment or supply the endpoint (If you've deployed ArmoniK locally it should be "localhost:5001")
 4.  You can also control the number of tasks (and thus, tiles) using the `NUM_RAYTRACING_TASKS` environment variable.
     ```bash
     export NUM_RAYTRACING_TASKS=20 # Example: divide into 20 tiles
