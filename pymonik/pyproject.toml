@@ -4,6 +4,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
+variable = "PYMONIK_BUILD_VERSION"
 
 [project]
 name = "pymonik"
