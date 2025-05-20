@@ -20,8 +20,8 @@ class ResultHandle(Generic[T]):
                 "Cannot wait for result in worker context. Use the client context instead."
             )
         try:
-            self._pymonik._events_client.wait_for_result_availability(
-                self.result_id, self.session_id
+            self._pymonik._wait_for_results_availability(
+                self.session_id, [self.result_id]
             )
             return self
         except Exception as e:
@@ -91,8 +91,8 @@ class MultiResultHandle:
 
         result_ids = [handle.result_id for handle in self.result_handles]
         try:
-            self._pymonik._events_client.wait_for_result_availability(
-                result_ids, self.session_id
+            self._pymonik._wait_for_results_availability(
+                self.session_id, result_ids
             )
             return self
         except Exception as e:
