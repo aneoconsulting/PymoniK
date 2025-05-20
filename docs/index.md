@@ -39,8 +39,8 @@ def add(a,b):
     return a+b
 
 with PymoniK():
-    my_constant = get_constant()
-    results = add.map_invoke([(my_constant(), i) for i in range(32)])
+    my_constant = get_constant.invoke()
+    results = add.map_invoke([(my_constant, i) for i in range(32)])
     sum_task = Task(sum)
     remote_partial_result = sum_task.invoke(results[:16])
     local_partial_result = sum_task(results[16:].wait().get())

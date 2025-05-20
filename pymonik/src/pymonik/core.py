@@ -11,11 +11,11 @@ import cloudpickle as pickle
 
 from datetime import timedelta
 from typing import Any, Callable, Dict, Generic, List, Optional, ParamSpec, Tuple, TypeVar, Union
-from .utils import LazyArgs, create_grpc_channel
+from .utils import LazyArgs, _poll_batch_for_results, create_grpc_channel
 from .results import ResultHandle, MultiResultHandle
 
 from armonik.client import ArmoniKTasks, ArmoniKResults, ArmoniKSessions, ArmoniKEvents
-from armonik.common import TaskOptions, TaskDefinition, Result
+from armonik.common import TaskOptions, TaskDefinition, Result, batched
 from armonik.worker import TaskHandler 
 
 _CURRENT_PYMONIK: contextvars.ContextVar[Optional["Pymonik"]] = contextvars.ContextVar(
@@ -220,6 +220,9 @@ class Pymonik:
         is_worker: bool = False,
         batch_size: int = 32,
         task_options: Optional[TaskOptions] = None,
+        disable_events_client: bool = False,
+        polling_interval: int = 1,
+        polling_batch_size: int = 10,
         local_session: bool = False
     ):
         """Initializes a PymoniK client instance.
@@ -251,6 +254,10 @@ class Pymonik:
                 by this client. These options include settings like maximum
                 duration, priority, and retry attempts for tasks. If None,
                 a default set of `TaskOptions` will be generated.
+            disable_events_client: A flag to disable the use of the events client. This switches 
+                to a polling based approach for waiting for results.
+            polling_interval: When using the polling based approach, polling interval in seconds.
+            polling_batch_size: Batch size to use when polling for results.
             local_session: A flag intended to control session behavior,
                 for local testing, it makes it so your function invokes execute locally.
                 Note: This parameter is not actively used in the current
@@ -271,6 +278,9 @@ class Pymonik:
         self.environment = environment
         self._token: Optional[contextvars.Token] = None
         self._is_worker_mode = is_worker
+        self.disable_events_client = disable_events_client
+        self.polling_interval = polling_interval
+        self.polling_batch_size = polling_batch_size
         self.batch_size = batch_size
         self.task_handler: Optional[TaskHandler] = None
         self._original_sigint_handler = None
@@ -315,6 +325,24 @@ class Pymonik:
                 names, self._session_id, batch_size=self.batch_size
             )
 
+    def _dispatch_upload_payload(self, name: str, payload: bytes | bytearray) -> Dict[str, Result]:
+        """Internal method to create upload data, dispatching to worker/client."""
+        if self.is_worker():
+            if not self.task_handler:
+                raise RuntimeError("Task handler not available in worker mode.")
+            # TaskHandler uses batch_size internally in the method call
+            raise NotImplementedError(
+                "TaskHandler does not support upload payloads."
+            )
+        else:
+            if not self._results_client:
+                raise RuntimeError("Results client not initialized.")
+            # ArmoniKResults client takes session_id and batch_size explicitly
+            return self._results_client.upload_result_data(
+                name, self._session_id, result_data=payload
+            )
+
+
     def _dispatch_create_payloads(
         self, payloads: Dict[str, bytes]
     ) -> Dict[str, Result]:
@@ -346,6 +374,34 @@ class Pymonik:
                 raise RuntimeError("Tasks client not initialized.")
 
             self._tasks_client.submit_tasks(self._session_id, task_definitions)
+
+
+    def _wait_for_results_availability(self, session_id: str, result_ids: List[str]):
+        if self.disable_events_client:
+            if not result_ids:
+                return
+
+            for batch_of_ids in batched(result_ids, self.polling_batch_size):
+                if not batch_of_ids: # This should not happen (please)
+                    continue
+                
+                _poll_batch_for_results(
+                    results_client=self._results_client,
+                    result_ids_in_batch=list(batch_of_ids), 
+                    polling_interval_seconds=self.polling_interval
+                )
+        else:
+            if self._events_client is None:
+                raise RuntimeError(
+                    "Events client (self._events_client) is not initialized. "
+                    "Ensure Pymonik.create() has been called or is active in the current context."
+                )
+            return self._events_client.wait_for_result_availability(
+                result_ids=result_ids,
+                session_id=session_id,
+                bucket_size=self.batch_size, # Use Pymonik's configured batch_size
+                parallelism=1               # Sensible default for events client path here
+            )
 
     def register_tasks(self, tasks: List[Task]):
         """Register a task with the PymoniK instance."""

@@ -1,8 +1,10 @@
+import time
 import grpc
 import cloudpickle as pickle
 
-from typing import Callable, Optional, Union
-from armonik.common.channel import create_channel
+from typing import List, Optional, Set, Union
+from armonik.common import create_channel, Result, ResultStatus
+from armonik.client import ArmoniKResults
 
 def create_grpc_channel(
     endpoint: str,
@@ -50,3 +52,55 @@ class LazyArgs:
 
     def __repr__(self):
         return f"<LazyArgs - Not Loaded>" if self._args is None else repr(self._args)
+
+
+def _poll_batch_for_results(
+    results_client: ArmoniKResults,
+    result_ids_in_batch: List[str],
+    polling_interval_seconds: float,
+) -> None:
+    """
+    Polls for the completion or abortion of a batch of results.
+    """
+    if not result_ids_in_batch:
+        return
+
+    not_found: Set[str] = set(result_ids_in_batch)
+
+    while not_found:
+        current_filter = None
+        for r_id in not_found:
+            filter_condition = (Result.result_id == r_id)
+            if current_filter is None:
+                current_filter = filter_condition
+            else:
+                current_filter = current_filter | filter_condition
+
+        if current_filter is None: # Should not happen if not_found is populated
+            break
+
+        try:
+            _total, fetched_results = results_client.list_results(
+                result_filter=current_filter,
+                page=0,
+                page_size=len(not_found),
+            )
+            for res_summary in fetched_results: 
+                if res_summary.result_id in not_found:
+                    if res_summary.status == ResultStatus.COMPLETED:
+                        not_found.remove(res_summary.result_id)
+                    elif res_summary.status == ResultStatus.ABORTED:
+                        raise RuntimeError(f"Result {res_summary.result_id} has been aborted.")
+
+            if not not_found: # All results in this batch are completed
+                break
+
+        except grpc.RpcError:
+            # Basic retry on RpcError.
+            pass
+        except RuntimeError: # Re-raise "Result ... has been aborted."
+            raise
+        except Exception as e:
+            raise RuntimeError(f"An unexpected error occurred while polling for results batch: {e}")
+
+        time.sleep(polling_interval_seconds)
