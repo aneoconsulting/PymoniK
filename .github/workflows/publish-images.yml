@@ -9,7 +9,7 @@ jobs:
   docker:
     strategy:
       matrix: 
-        python_version: [3.10.12, 3.11]
+        python_version: [3.10.12, 3.11, 3.12]
     runs-on: ubuntu-latest
     steps:
       - name: Login to Docker Hub
