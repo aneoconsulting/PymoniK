@@ -103,6 +103,20 @@ class MultiResultHandle:
         """Get all result values."""
         # TODO: maybe should cache the get
         return [handle.get() for handle in self.result_handles]
+    
+    def append(self, other):
+        if isinstance(other, ResultHandle):
+            self.result_handles.append(other)
+        else:
+            raise TypeError(f'Cannot append a "{type(other).__name__}" type to a MultiResultHandle, append parmeter must be ResultHandle type')
+    
+    def extend(self, other):
+        if isinstance(other, MultiResultHandle):
+            self.result_handles.extend(other)
+        elif isinstance(other, list) and all(isinstance(x, ResultHandle) for x in other):
+            self.result_handles.extend(other)
+        else:
+            raise TypeError(f'Cannot extend with a "{type(other).__name__}" type, extend parmeter must be MultiResultHandle or List[ResultHandle] type')
 
     def __iter__(self):
         return iter(self.result_handles)
