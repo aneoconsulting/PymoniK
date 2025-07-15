@@ -1,0 +1,2 @@
+mkdocs-material[imaging]
+mkdocs-click
