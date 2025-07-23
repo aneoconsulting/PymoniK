@@ -32,17 +32,85 @@ class Task(Generic[P_Args, R_Type]):
     """A wrapper for a function that can be executed as an ArmoniK task."""
 
     def __init__(
-        self, func: Callable, require_context: bool = False, func_name: str = None
+        self, func: Callable, require_context: bool = False, func_name: str = None,        task_options: Optional[TaskOptions] = None
+
     ):
         self.func: Callable[P_Args, R_Type] = func
         self.func_name = func_name or func.__name__
         self.require_context = require_context
+        self.task_options = task_options
+
+
+    def _merge_task_options(
+        self, 
+        pymonik_instance: "Pymonik",
+        task_options: Optional[TaskOptions] = None,
+        pmk_kwargs: Dict[str, Any] = None
+    ) -> TaskOptions:
+        """Merge task options from different sources with proper precedence."""
+        pmk_kwargs = pmk_kwargs or {}
+        # Start with Pymonik instance defaults
+        base_options = pymonik_instance.task_options
+        
+        # Create a dictionary to build the merged options
+        merged_attrs = {
+            'max_duration': base_options.max_duration,
+            'priority': base_options.priority,
+            'max_retries': base_options.max_retries,
+            'partition_id': base_options.partition_id,
+        }
+        
+        # Apply task decorator options if they exist
+        if self.task_options:
+            if self.task_options.max_duration is not None:
+                merged_attrs['max_duration'] = self.task_options.max_duration
+            if self.task_options.priority is not None:
+                merged_attrs['priority'] = self.task_options.priority
+            if self.task_options.max_retries is not None:
+                merged_attrs['max_retries'] = self.task_options.max_retries
+            if self.task_options.partition_id is not None:
+                merged_attrs['partition_id'] = self.task_options.partition_id
+        
+        # Apply invocation-specific task options
+        if task_options:
+            if task_options.max_duration is not None:
+                merged_attrs['max_duration'] = task_options.max_duration
+            if task_options.priority is not None:
+                merged_attrs['priority'] = task_options.priority
+            if task_options.max_retries is not None:
+                merged_attrs['max_retries'] = task_options.max_retries
+            if task_options.partition_id is not None:
+                merged_attrs['partition_id'] = task_options.partition_id
+            
+        # Apply pmk_ prefixed options
+        for key, value in pmk_kwargs.items():
+            if key.startswith('pmk_'):
+                option_name = key[4:]  # Remove 'pmk_' prefix
+                if option_name == 'max_duration':
+                    # Handle duration conversion if needed
+                    if isinstance(value, (int, float)):
+                        merged_attrs['max_duration'] = timedelta(seconds=value)
+                    elif isinstance(value, timedelta):
+                        merged_attrs['max_duration'] = value
+                else:
+                    merged_attrs[option_name] = value
+        
+        return TaskOptions(
+            max_duration=merged_attrs['max_duration'],
+            priority=merged_attrs['priority'],
+            max_retries=merged_attrs['max_retries'],
+            partition_id=merged_attrs['partition_id'],
+        )
 
     # TODO: repeat invocations for parameter-less functions my_function.invoke(repeat=5)
     def invoke(
-        self, *args, pymonik: Optional["Pymonik"] = None, delegate=False
+        self, *args, pymonik: Optional["Pymonik"] = None, delegate=False, task_options: Optional[TaskOptions] = None, **kwargs
     ) -> ResultHandle[R_Type]:
         """Invoke the task with the given arguments."""
+
+        pmk_kwargs = {k: v for k, v in kwargs.items() if k.startswith('pmk_')}
+        regular_kwargs = {k: v for k, v in kwargs.items() if not k.startswith('pmk_')}
+
 
         # Handle the case of a single task
         if pymonik is None:
@@ -51,10 +119,14 @@ class Task(Generic[P_Args, R_Type]):
                 raise RuntimeError(
                     "No active PymoniK instance found. Please create one and pass it in or use the context manager."
                 )
+                
+        # I'm using the 'pmk_' prefix to avoid potential naming conflicts.
+        merged_task_options = self._merge_task_options(pymonik, task_options, pmk_kwargs)
+        
         if len(args) == 0:
-            results = self._invoke_multiple([(Pymonik.NoInput,)], pymonik, delegate)
+            results = self._invoke_multiple([(Pymonik.NoInput,)], pymonik, delegate, merged_task_options)
             return results[0]
-        results: List[ResultHandle[R_Type]] = self._invoke_multiple([args], pymonik, delegate)
+        results: List[ResultHandle[R_Type]] = self._invoke_multiple([args], pymonik, delegate, merged_task_options, additional_kwargs=regular_kwargs if regular_kwargs != {} else None)
         return results[0]
 
     def map_invoke(
@@ -62,23 +134,31 @@ class Task(Generic[P_Args, R_Type]):
         args_list: List[Tuple],
         pymonik: Optional["Pymonik"] = None,
         delegate=False,
+        task_options: Optional[TaskOptions] = None,
+        **kwargs
     ) -> MultiResultHandle:
         """Invoke the task with the given arguments and return a MultiResultHandle."""
+        
+        pmk_kwargs = {k: v for k, v in kwargs.items() if k.startswith('pmk_')}
+        
         if pymonik is None:
             pymonik = _CURRENT_PYMONIK.get(None)
             if pymonik is None:
                 raise RuntimeError(
                     "No active PymoniK instance found. Please create one and pass it in or use the context manager."
                 )
+                
+        merged_task_options = self._merge_task_options(pymonik, task_options, pmk_kwargs)
+                
         # Handle the case of multiple tasks
-        result_handles: List[ResultHandle[R_Type]] = self._invoke_multiple(args_list, pymonik, delegate)
+        result_handles: List[ResultHandle[R_Type]] = self._invoke_multiple(args_list, pymonik, delegate, merged_task_options)
         return MultiResultHandle(result_handles)
 
     def __call__(self, *args, **kwds):
         return self.func(*args, **kwds)
 
     def _invoke_multiple(
-        self, args_list: List[Tuple], pymonik_instance: "Pymonik", delegate: bool
+        self, args_list: List[Tuple], pymonik_instance: "Pymonik", delegate: bool, task_options: TaskOptions, additional_kwargs: Optional[Dict[str, Any]] = None
     ) -> List[ResultHandle]:
         """Invoke a multiple tasks with the given arguments."""
         # Ensure we have an active connection and session
@@ -194,7 +274,8 @@ class Task(Generic[P_Args, R_Type]):
 
         # Submit the task
         pymonik_instance._dispatch_submit_tasks(
-            task_definitions  # TODO: use different batch size for tasks/results
+            task_definitions,  # TODO: use different batch size for tasks/results
+            task_options
         )
 
         # Return a handle to the result
@@ -215,7 +296,7 @@ class Pymonik:
     def __init__(
         self,
         endpoint: Optional[str] = None,
-        partition: Optional[str] = "pymonik",
+        partition: Optional[Union[str, List[str]]] = "pymonik",
         environment: Dict[str, Any] = {},
         is_worker: bool = False,
         batch_size: int = 32,
@@ -270,7 +351,7 @@ class Pymonik:
             max_duration=timedelta(seconds=300),
             priority=1,
             max_retries=5,
-            partition_id=self._partition,
+            partition_id=self._partition if isinstance(self._partition, str) else self._partition[0], # if using multiple partitions and no task options we just use the first partition specified,
         )
         self._connected = False
         self._session_created = False
@@ -360,7 +441,7 @@ class Pymonik:
                 payloads, self._session_id, batch_size=self.batch_size
             )
 
-    def _dispatch_submit_tasks(self, task_definitions: List[TaskDefinition]) -> None:
+    def _dispatch_submit_tasks(self, task_definitions: List[TaskDefinition], task_options: Optional[TaskOptions] = None) -> None:
         """Internal method to submit tasks, dispatching to worker/client."""
         if self.is_worker():
             if not self.task_handler:
@@ -368,12 +449,14 @@ class Pymonik:
             self.task_handler.submit_tasks(
                 task_definitions,
                 batch_size=self.batch_size,  # NOTE: this is bad, really bad (set client side but we just use the default for worker)
+                default_task_options=task_options
             )
         else:
             if not self._tasks_client:
                 raise RuntimeError("Tasks client not initialized.")
-
-            self._tasks_client.submit_tasks(self._session_id, task_definitions)
+            print(task_options)
+            print("MHM.")
+            self._tasks_client.submit_tasks(self._session_id, task_definitions, default_task_options=task_options)
 
 
     def _wait_for_results_availability(self, session_id: str, result_ids: List[str]):
@@ -507,7 +590,7 @@ class Pymonik:
         # Create a session
         self._session_id = self._sessions_client.create_session(
             default_task_options=self.task_options,
-            partition_ids=[self._partition] if self._partition is not None else None,
+            partition_ids=[self._partition] if isinstance(self._partition, str) else self._partition,
         )
         self._session_created = True
         print(f"Session {self._session_id} has been created")
@@ -774,10 +857,90 @@ def task(
     *,
     require_context: bool = False,
     function_name: Optional[str] = None,
+    task_options: Optional[TaskOptions] = None,
+    partition: Optional[str] = None,
+    max_duration: Optional[Union[timedelta, int, float]] = None,
+    priority: Optional[int] = None,
+    max_retries: Optional[int] = None,
 ) -> Union[Callable, Task]:
+    """Decorator to create a Task from a function.
+    
+    Args:
+        _func: The function to wrap (used internally by decorator syntax)
+        require_context: Whether the task requires a PymonikContext
+        function_name: Custom name for the function
+        task_options: Complete TaskOptions object to use as defaults
+        partition: Shortcut to specify partition_id
+        max_duration: Maximum duration for the task (timedelta, or seconds as int/float)
+        priority: Task priority 
+        max_retries: Maximum number of retries
+    
+    Usage:
+        @task
+        def my_func():
+            pass
+            
+        @task(partition="gpu", max_duration=600, priority=2)
+        def gpu_func():
+            pass
+            
+        @task(task_options=TaskOptions(max_duration=timedelta(minutes=10)))
+        def complex_func():
+            pass
+    """
     def decorator(func: Callable[P_Args,R_Type]) -> Task[P_Args,R_Type]:
         resolved_name = function_name or func.__name__
-        return Task[P_Args,R_Type](func, require_context=require_context, func_name=resolved_name)
+        
+        # Build task options from individual parameters
+        decorator_task_options = None
+        if (task_options is not None or 
+            partition is not None or 
+            max_duration is not None or 
+            priority is not None or 
+            max_retries is not None):
+            
+            # Start with provided task_options or create new one
+            if task_options is not None:
+                # Copy the existing task options
+                base_max_duration = task_options.max_duration
+                base_priority = task_options.priority
+                base_max_retries = task_options.max_retries
+                base_partition_id = task_options.partition_id
+            else:
+                # Use None as default, will be filled by Pymonik defaults later
+                base_max_duration = None
+                base_priority = None
+                base_max_retries = None
+                base_partition_id = None
+            
+            # Override with individual parameters
+            final_max_duration = base_max_duration
+            if max_duration is not None:
+                if isinstance(max_duration, (int, float)):
+                    final_max_duration = timedelta(seconds=max_duration)
+                elif isinstance(max_duration, timedelta):
+                    final_max_duration = max_duration
+                    
+            final_priority = priority if priority is not None else base_priority
+            final_max_retries = max_retries if max_retries is not None else base_max_retries
+            final_partition_id = partition if partition is not None else base_partition_id
+            
+            decorator_task_options = TaskOptions(
+                max_duration=final_max_duration,
+                priority=final_priority,
+                max_retries=final_max_retries,
+                partition_id=final_partition_id,
+            )
+
+        # # TODO: Remove        
+        # print(f"Decorator Task Options {decorator_task_options}")
+        
+        return Task[P_Args,R_Type](
+            func, 
+            require_context=require_context, 
+            func_name=resolved_name,
+            task_options=decorator_task_options
+        )
 
     if _func is None:
         # Case 1: Called with arguments - @task(...)
