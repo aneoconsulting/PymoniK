@@ -134,3 +134,7 @@ class MultiResultHandle:
 
     def __repr__(self):
         return f"<MultiResultHandle(results={self.result_handles})>"
+
+class RemoteFile:
+    def __init__(self) -> None:
+        pass
