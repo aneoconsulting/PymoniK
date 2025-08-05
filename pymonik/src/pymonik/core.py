@@ -13,6 +13,7 @@ from datetime import timedelta
 from typing import Any, Callable, Dict, Generic, List, Optional, ParamSpec, Tuple, TypeVar, Union
 from .utils import LazyArgs, _poll_batch_for_results, create_grpc_channel
 from .results import ResultHandle, MultiResultHandle
+from .materialize import Materialize, _create_zip_from_directory
 
 from armonik.client import ArmoniKTasks, ArmoniKResults, ArmoniKSessions, ArmoniKEvents
 from armonik.common import TaskOptions, TaskDefinition, Result, batched
@@ -223,6 +224,13 @@ class Task(Generic[P_Args, R_Type]):
                         f"__multi_result_handle__"
                         + ",".join([handle.result_id for handle in arg.result_handles])
                     )
+                elif isinstance(arg, Materialize):
+                    if not arg.result_id:
+                        raise ValueError(f"Materialize object must be uploaded first: {arg}")
+                    # Add the materialized content as a dependency
+                    function_invocation_info["data_dependencies"].append(arg.result_id)
+                    # Pass the Materialize object directly (it will be pickled)
+                    processed_args.append(arg)
                 else:
                     processed_args.append(arg)
 
@@ -454,8 +462,6 @@ class Pymonik:
         else:
             if not self._tasks_client:
                 raise RuntimeError("Tasks client not initialized.")
-            print(task_options)
-            print("MHM.")
             self._tasks_client.submit_tasks(self._session_id, task_definitions, default_task_options=task_options)
 
 
@@ -682,6 +688,55 @@ class Pymonik:
              raise RuntimeError("Results client not initialized after create().")
         if not self._session_id:
              raise RuntimeError("Session ID not available after create().")
+
+    def upload_materialize(self, mat: Materialize, force_upload: bool = False) -> Materialize:
+        """
+        Upload a Materialize object to ArmoniK if it doesn't already exist.
+        
+        Args:
+            mat: Materialize object to upload
+            
+        Returns:
+            Materialize: Updated materialize object with result_id set
+        """
+        self._ensure_client_ready()
+        
+        # Check if result with this hash already exists
+        hash_result_name = f"materialize_{mat.content_hash}"
+        
+        try:
+            # Try to list results to see if one with this name exists
+            # This is a simplified approach but it should work right?
+            # ... surely..?
+            
+            # Query for existing results with our hash name
+            existing_results = self._results_client.get_results_ids(
+                session_id=self._session_id,
+                names=[hash_result_name]
+            )
+            print(f"Existing Results = {existing_results}")
+            if not force_upload and hash_result_name in existing_results:
+                existing_result_id = existing_results[hash_result_name]
+                print(f"Materialize content with hash {mat.content_hash} already exists: {existing_result_id}")
+                mat.result_id = existing_result_id
+                return mat
+                
+        except Exception as e:
+            # If query fails, proceed with upload
+            print(f"Could not check for existing materialize content: {e}")
+        
+        # Prepare content for upload
+        if mat.is_directory:
+            content_bytes = _create_zip_from_directory(mat.source_path)
+        else:
+            with open(mat.source_path, 'rb') as f:
+                content_bytes = f.read()
+        # Upload to ArmoniK
+        upload_results = self._dispatch_create_payloads({hash_result_name: content_bytes})
+        mat.result_id = upload_results[hash_result_name].result_id
+        
+        print(f"Uploaded materialize content: {mat.source_path} -> {mat.result_id} (hash: {mat.content_hash})")
+        return mat
 
     def put(self, obj: U_Obj, name: Optional[str] = None) -> ResultHandle[U_Obj]:
         """

@@ -24,6 +24,8 @@ def find_file(filename, search_path=None):
     
     return None
 
+# TODO: Instead of require_context, let's not fuck with the function's signature
+# instead, ContextManager, and `ctx = get_context()` in the function body when needed. 
 @task(require_context=True)
 def my_task(ctx: PymonikContext, result_id):
     
