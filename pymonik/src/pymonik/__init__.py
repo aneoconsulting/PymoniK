@@ -4,6 +4,7 @@ from .core import Pymonik, Task, task
 from .context import PymonikContext
 from .results import ResultHandle, MultiResultHandle
 from .worker import run_pymonik_worker
+from .materialize import Materialize, materialize
 from armonik.common import TaskOptions
 
 try:
@@ -20,4 +21,6 @@ __all__ = [
     "ResultHandle",
     "MultiResultHandle",
     "TaskOptions",
+    "Materialize",
+    "materialize"
 ]

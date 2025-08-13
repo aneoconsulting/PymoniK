@@ -1,5 +1,6 @@
 site/
 .vscode/
+test_materials/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
