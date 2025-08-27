@@ -58,6 +58,7 @@ class Task(Generic[P_Args, R_Type]):
             'priority': base_options.priority,
             'max_retries': base_options.max_retries,
             'partition_id': base_options.partition_id,
+            'options' : base_options.options
         }
         
         # Apply task decorator options if they exist
@@ -70,6 +71,8 @@ class Task(Generic[P_Args, R_Type]):
                 merged_attrs['max_retries'] = self.task_options.max_retries
             if self.task_options.partition_id is not None:
                 merged_attrs['partition_id'] = self.task_options.partition_id
+            if self.task_options.options is not None:
+                merged_attrs['options'] = self.task_options.options
         
         # Apply invocation-specific task options
         if task_options:
@@ -81,6 +84,8 @@ class Task(Generic[P_Args, R_Type]):
                 merged_attrs['max_retries'] = task_options.max_retries
             if task_options.partition_id is not None:
                 merged_attrs['partition_id'] = task_options.partition_id
+            if task_options.options is not None:
+                merged_attrs['options'] = task_options.options
             
         # Apply pmk_ prefixed options
         for key, value in pmk_kwargs.items():
@@ -100,6 +105,7 @@ class Task(Generic[P_Args, R_Type]):
             priority=merged_attrs['priority'],
             max_retries=merged_attrs['max_retries'],
             partition_id=merged_attrs['partition_id'],
+            options=merged_attrs['options']
         )
 
     # TODO: repeat invocations for parameter-less functions my_function.invoke(repeat=5)
@@ -454,8 +460,6 @@ class Pymonik:
         else:
             if not self._tasks_client:
                 raise RuntimeError("Tasks client not initialized.")
-            print(task_options)
-            print("MHM.")
             self._tasks_client.submit_tasks(self._session_id, task_definitions, default_task_options=task_options)
 
 
