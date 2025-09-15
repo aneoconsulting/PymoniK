@@ -1,0 +1,15 @@
+[project]
+name = "metropolis"
+version = "0.1.0"
+description = "Metropolis-Hastings simple implementation"
+readme = "README.md"
+requires-python = ">=3.10.12"
+dependencies = [
+  "black>=24.8.0",
+  "numpy>=2.1.1",
+  "pymonik",
+  "vtk>=9.3.0",
+]
+
+[tool.uv.sources]
+pymonik = { path = "../../pymonik", editable = true }
