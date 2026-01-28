@@ -1,4 +1,4 @@
-## PymoniK
+## Quick introduction
 
 
 PymoniK is a dead simple Python framework for writing distributed programs that run on an ArmoniK cluster. It's a wrapper around the low-level `ArmoniK.API` that allows you to easily make your Python programs distributed. 

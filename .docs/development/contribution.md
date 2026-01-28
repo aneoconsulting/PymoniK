@@ -2,7 +2,7 @@
 
 This doesn't differ from our other projects ([Read ArmoniK.CLI's CONTRIBUTING.md](https://github.com/aneoconsulting/ArmoniK.CLI/blob/main/CONTRIBUTING.md)).
 
-## Open Issues:
+## Open Issues
 
 Here's a non-exhaustive list of things that are outright/partially missing from PymoniK that we'd like to see added in: 
 

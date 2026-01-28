@@ -1,4 +1,4 @@
-# Hello ArmoniK
+# Getting started
 
 - We'll be using `uv` as our Python project manager, so if you haven't installed it yet, follow the instructions [here](https://docs.astral.sh/uv/getting-started/installation/).
 
