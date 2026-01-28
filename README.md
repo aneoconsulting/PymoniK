@@ -7,9 +7,9 @@
 
 PymoniK is a dead simple Python framework for writing distributed programs that run on an ArmoniK cluster.
 
-[Documentation](https://aneoconsulting.github.io/PymoniK)
-[Getting Started](https://aneoconsulting.github.io/PymoniK/getting-started/)
-[Contributing](https://aneoconsulting.github.io/PymoniK/development/contribution/)
+[Documentation](https://pymonik.readthedocs.io/en/latest)
+[Getting Started](https://pymonik.readthedocs.io/en/latest/getting-started.html)
+[Contributing](https://pymonik.readthedocs.io/en/latest/development/contribution.html)
 </div>
 
 ## Requirements
