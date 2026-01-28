@@ -1,3 +1,5 @@
+# Adding a worker image
+
 You can add a new worker image to your ArmoniK cluster by creating a partition, inside your control plane
 
 ```tf
