@@ -40,23 +40,23 @@ This scenario illustrates the a basic and direct pricing interaction pattern sup
 It is intentionally minimal and synchronous, so it is straighforward to understand and ideal as a
 starting point for new users. In this workflow:
 
-1. The user prepares all required input data locally, including:
-   * Market data (e.g., spot prices, rates, volatilities)
-   * Product or instrument definitions (e.g., an option with a notional)
-   * Any additional pricing parameters
-2. The user submits a **single pricing task** to ArmoniK.
-3. The user waits synchronously for the task to complete.
-4. Once execution finishes, the pricing result is retrieved and returned to the user.
+- The user prepares all required input data locally, including:
+    - Market data (e.g., spot prices, rates, volatilities)
+    - Product or instrument definitions (e.g., an option with a notional)
+    - Any additional pricing parameters
+- The user submits a single pricing task to ArmoniK.
+- The user waits synchronously for the task to complete.
+- Once execution finishes, the pricing result is retrieved and returned to the user.
 
 There is no task decomposition, no fan-out/fan-in logic, and no dependency management.
 The entire pricing request is handled as one atomic unit of work.
 
 This interaction model is particularly well suited for:
 
-* Pricing a single financial instrument
-* Lightweight or fast pricing models
-* Interactive workflows (e.g., notebooks, scripts, UI-driven tools)
-* Situations where immediate feedback is required
+- Pricing a single financial instrument
+- Lightweight or fast pricing models
+- Interactive workflows (e.g., notebooks, scripts, UI-driven tools)
+- Situations where immediate feedback is required
 
 ---
 
@@ -149,41 +149,43 @@ with Pymonik(endpoint="localhost:5001"):
 
 From the user’s perspective, the call behaves much like a local function call, while ArmoniK transparently handles remote execution and scheduling.
 
-### Key Characteristics
+### Take-away messages
 
-* One task → one result
-* The user explicitly waits for completion
-* Minimal orchestration logic
-* Suitable for straightforward pricing problems
+- One task → one result
+- The user explicitly waits for completion
+- Minimal orchestration logic
+- Suitable for straightforward pricing problems
 
 ---
 
 ## Scenario 2 – Portfolio Pricing with Subtasking and Monte Carlo
 
-### Overview
+In this scenario, the pricing logic itself takes responsibility for orchestrating the computation. Rather than submitting many independent tasks from the client side, the user submits a single, high-level portfolio pricer task. At runtime, this task dynamically constructs and executes a task graph based on the actual contents of the portfolio.
+As a result, orchestration is shifted away from the user and into the pricing logic. This allows complex workflows to be defined within the computation itself, instead of being fixed at submission time.
 
-In this scenario, the pricing logic itself becomes responsible for **building and executing a task graph** dynamically.
+At a high level, this means that:
 
-The workflow is:
+- The user interacts with ArmoniK only once.
+- All task creation, fan-out, and aggregation are handled transparently inside the portfolio pricer.
+- The user ultimately receives a single, aggregated portfolio value.
 
-1. User provides a portfolio and market data
-2. User submits a single *portfolio pricer* task
-3. The pricer:
+Because of this design, the execution model is particularly well suited for:
 
-   * Prices all vanilla products
-   * Builds a dynamic computation graph for complex products using Monte Carlo
-   * Aggregates partial results
-   * Aggregates the total portfolio value
-4. The final result is **delegated** to the last aggregation task
-5. The user retrieves a single portfolio-level result
+- Large portfolios containing many instruments.
+- Heterogeneous product mixes, including both vanilla and exotic products.
+- Computationally intensive models, such as:
+    - Monte Carlo simulations
+    - Scenario-based pricing
+    - Path-dependent products
+- Situations in which:
+    - The computation structure cannot be determined upfront
+    - Task creation depends on intermediate results
 
-This model is ideal for:
+---
 
-* Large portfolios
-* Heterogeneous products
-* Computationally intensive models (e.g. Monte Carlo)
+### Workflow Diagram
 
-### Workflow diagram
+The diagram below expresses the workflow for this second scenario:
 
 ```mermaid
 
@@ -312,23 +314,55 @@ flowchart TB
 
 ```
 
+The execution flow proceeds as follows:
+
+1. The user prepares and provides:
+   * A portfolio containing multiple financial instruments
+   * The associated market data required for pricing
+2. The user submits one portfolio pricer task to ArmoniK.
+3. The portfolio pricer executes and:
+   * Identifies and prices all vanilla products directly
+   * Detects complex products requiring advanced models
+   * Dynamically constructs a computation graph for those products
+   * Launches Monte Carlo or other heavy computations as subtasks
+   * Collects and aggregates partial pricing results
+4. A final aggregation task computes the total portfolio value.
+5. The user retrieves a single portfolio-level result.
+
+From the client’s point of view, the interaction remains simple and synchronous. The user submits one task and receives one result, even though the internal execution may involve hundreds or thousands of distributed tasks running in parallel. This abstraction is made possible because, within the ArmoniK framework, the portfolio pricer itself can act as a **runtime orchestrator**.
+
+- It inspects the portfolio composition.
+    - For vanilla instruments:
+        - Pricing is performed directly within the main task or via lightweight subtasks.
+    - For complex instruments:
+        - A dynamic task graph is built.
+        - Monte Carlo simulations are split into many independent subtasks.
+        - Each subtask computes partial statistics (e.g. payoffs, paths). These partial results are progressively collected and combined as the computation advances.
+
 ### What ArmoniK Does
 
-* Executes the initial portfolio task
-* Accepts **new task submissions from within running tasks** (subtasking)
-* Dynamically extends the task graph
-* Ensures dependencies are respected
-* Propagates delegated results so that the parent task’s result becomes the final aggregation output
+ArmoniK provides the execution backbone that makes this model possible. In particular, it:
 
-From the user’s point of view, this still looks like a **single task invocation**.
+- Executes the initial portfolio pricer task
+- Allows running tasks to submit new tasks dynamically (subtasking)
+- Dynamically extends the task graph as new computation paths are discovered
+- Tracks and enforces task dependencies to ensure correct execution order
+- Manages result propagation so that delegated subtask results are routed back to their parent tasks
+- Ensures that the parent task’s result becomes the final aggregated portfolio output
+
+Despite the complexity of the internal execution, from the user’s perspective this still appears as a single task invocation producing a single result. All orchestration, parallelization, and aggregation are handled transparently by the portfolio pricer and the ArmoniK runtime.
 
 ---
 
-## Example: Portfolio Pricer with Subtasking
+## Example Code
+
+The following example demonstrates how to define and invoke the pricing task explained above using PymoniK. Each code
+block is followed by a step-by-step explanation.
 
 ### Supporting Tasks
 
-```python
+```{code-block} python
+:linenos:
 import numpy as np
 from pymonik import task
 
@@ -351,9 +385,14 @@ def aggregate_portfolio(values):
     return sum(values)
 ```
 
+- Lines 4–6 handle simple vanilla products directly.
+- Lines 8–12 implement a Monte Carlo simulation for complex products.
+- Lines 14–20 define aggregation tasks to combine partial results.
+
 ### Complex Product Pricing via Subtasking
 
-```python
+```{code-block} python
+:linenos:
 @task
 def price_complex_product(product, market_data):
     # Launch Monte Carlo paths in parallel
@@ -365,9 +404,13 @@ def price_complex_product(product, market_data):
     return aggregate_mc_results.invoke(mc_results, delegate=True)
 ```
 
+- Line 4–6: map_invoke runs multiple Monte Carlo simulations in parallel, each with a different seed.
+- Line 9: delegate=True tells ArmoniK that the aggregation result will replace the parent task’s result, making orchestration seamless.
+
 ### Portfolio Pricer (Entry Point)
 
-```python
+```{code-block} python
+:linenos:
 @task
 def price_portfolio(portfolio, market_data):
     vanilla_products = [p for p in portfolio if p["type"] == "vanilla"]
@@ -387,9 +430,16 @@ def price_portfolio(portfolio, market_data):
     return aggregate_portfolio.invoke(all_prices, delegate=True)
 ```
 
+- Lines 3–4: Separate the portfolio into vanilla and complex products.
+- Lines 6–8: Price all vanilla products in parallel using map_invoke.
+- Lines 10–12: Price complex products using the dynamic Monte Carlo subtasks.
+- Line 14: Combine all results.
+- Line 17: Delegate the final portfolio sum, ensuring the portfolio pricer task returns the total value transparently.
+
 ### User Code
 
-```python
+```{code-block} python
+:linenos:
 from pymonik import Pymonik
 
 portfolio = [
@@ -404,13 +454,26 @@ with Pymonik(endpoint="localhost:5001", environment={"pip": ["numpy"]}):
     print("Portfolio value:", result)
 ```
 
+- Lines 3–6: Define a sample portfolio with one vanilla and one complex product.
+- Line 8: Provide market data needed for pricing.
+- Line 10: Initialize a PymoniK client session connecting to the ArmoniK server.
+- Line 11: Invoke the portfolio pricer task. .wait().get() blocks until the result is ready.
+- Line 12: Print the final portfolio value.
+
 ---
+
+### Take-away messages
+
+-  Dynamic Orchestration: Complex product pricing uses subtasks that are launched dynamically, depending on the portfolo content.
+-  Delegation: Aggregation tasks replace parent task results seamlessly, giving the user the appearance of a single synhronous invocation.
+-  Parallelism: map_invoke allows Monte Carlo paths and vanilla product pricing to execute in parallel, maximizing resorce utilization.
+-  User Simplicity: From the user perspective, only one task is submitted, and a single portfolio-level result is returned.
 
 ## Summary
 
 * **Scenario 1** demonstrates a straightforward request–response pricing model
 * **Scenario 2** leverages ArmoniK’s dynamic task graph and subtasking capabilities to scale complex portfolio pricing
-* Pymonik allows both workflows to be expressed naturally in Python while keeping the user-facing API simple
+* Pymonik allows both workflows to be expressed naturally as Python code while keeping the user-facing API simple
 
 From a user’s perspective, both scenarios boil down to:
 
