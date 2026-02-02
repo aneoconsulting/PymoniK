@@ -39,30 +39,21 @@ This model is ideal for:
 ### Workflow Diagram
 
 ```mermaid
-graph TB
-  classDef invisibleBlock fill:#00000000,stroke-width:0px, color:#0000;
-  classDef invisibleText color:#0000;
-  
-  subgraph Empty\_Columns
-    s1["empty"]:::invisibleBlock
-    s2["empty"]:::invisibleBlock
-  end
+graph TD
+    %% Define other nodes
+    id1["Portfolio"]
+    id2["Market Data"]
+    id3((("user")))
+    id4["pricer"]
+    id5["Final Portfolio Price"]
 
-  id1["Portfolio"]
-  id2["Market Data"]
-
-  id3((("user")))
-  id4(["pricer"])
-  
-  id1 --> id4
-  id2 --> id4
-
-  id3 -- "1. User provides input data" --> id1
-  id3 -- "2. User submits the task" --> id4
-
-  id5["Final Portfolio Price"]
-  id4 --> id5
-  id3 -- "3. User waits for the result availability and downloads the result" --> id5
+    %% Define connections
+    id1 --> id4
+    id2 --> id4
+    id3 -- "1: User provides input data" --> id1
+    id3 -- "2: User submits the task" --> id4
+    id4 --> id5
+    id3 -- "3: User waits for the result availability and downloads the result" --> id5
 
 ```
 
@@ -133,135 +124,129 @@ This model is ideal for:
 ### Workflow diagram
 
 ```mermaid
-graph TB
-  classDef invisibleBlock fill:#00000000,stroke-width:0px;
-  classDef invisibleText color:#0000;
 
-  %% Global Inputs
-  %% Invisible inputs for Portfolio and Market Data
-  subgraph global_inputs [ ]
-    class global_inputs invisibleBlock
-    id1["Portfolio"]
-    id2["Market Data"]
-    id3(["pricer"])
-  end
+flowchart TB
+    subgraph Inputs [" "]
+        style Inputs fill:#ffffff, stroke:none;
+        direction TB
+        id1["Portfolio"]
+        id2["Market Data"]
+        id3["Pricer"]
 
-  id1 --> id3
-  id2 --> id3
+        id1 --> id3
+        id2 --> id3
+    end
 
-  %% User Interaction
-  id4((("user")))
-  id4 -- "1. User provides input data" --> id1
-  id4 -- "2. User submits the task" --> id3
+    id4(("User"))
+    id4 -- "1: User provides input data" --> id1
+    id4 -- "2: User submits the task" --> id3
 
-  %% Subtasks
-  subgraph subtasks [ ]
-    class subtasks invisibleBlock
-    columns 4
+    subgraph Subtasks [" "]
+        style Subtasks fill:#ffffff, stroke:ffffff;
+        direction TB
+        v["Vanilla"]
+        x["Complex Product 1"]
+        y["Complex Product 2"]
+        z["Complex Product 3"]
 
-    v["Vanilla"]
-    x["Complex Product 1"]
-    y["Complex Product 2"]
-    z["Complex Product 3"]
+        xc1[" "]
+        xc2[" "]
+        xc3[" "]
 
-    %% Individual computations from Complex Products
-    xc1("mc")
-    xc2("mc")
-    xc3("mc")
-    xc4("mc")
-    x --> xc1
-    x --> xc2
-    x --> xc3
-    x --> xc4
+        yc1[" "]
+        yc2[" "]
+        yc3[" "]
 
-    yc1("mc")
-    yc2("mc")
-    yc3("mc")
-    yc4("mc")
-    y --> yc1
-    y --> yc2
-    y --> yc3
-    y --> yc4
+        zc1[" "]
+        zc2[" "]
+        zc3[" "]
 
-    zc1("mc")
-    zc2("mc")
-    zc3("mc")
-    zc4("mc")
-    z --> zc1
-    z --> zc2
-    z --> zc3
-    z --> zc4
 
-    %% Results aggregation
-    xd1["res"]
-    xd2["res"]
-    xd3["res"]
-    xd4["res"]
-    xc1 --> xd1
-    xc2 --> xd2
-    xc3 --> xd3
-    xc4 --> xd4
+        id2 --> xc1
+        id2 --> xc2
+        id2 --> xc3
+        x --> xc1
+        x --> xc2
+        x --> xc3
 
-    yd1["res"]
-    yd2["res"]
-    yd3["res"]
-    yd4["res"]
-    yc1 --> yd1
-    yc2 --> yd2
-    yc3 --> yd3
-    yc4 --> yd4
+        id2 --> yc1
+        id2 --> yc2
+        id2 --> yc3
+        y --> yc1
+        y --> yc2
+        y --> yc3
 
-    zd1["res"]
-    zd2["res"]
-    zd3["res"]
-    zd4["res"]
-    zc1 --> zd1
-    zc2 --> zd2
-    zc3 --> zd3
-    zc4 --> zd4
+        id2 --> zc1
+        id2 --> zc2
+        id2 --> zc3
+        z --> zc1
+        z --> zc2
+        z --> zc3
 
-    %% Aggregate results
-    xa(["Aggregate"])
-    ya(["Aggregate"])
-    za(["Aggregate"])
+        xd1[" "]
+        xd2[" "]
+        xd3[" "]
 
-    xd1 --> xa
-    xd2 --> xa
-    xd3 --> xa
-    xd4 --> xa
+        xc1 --> xd1
+        xc2 --> xd2
+        xc3 --> xd3
 
-    yd1 --> ya
-    yd2 --> ya
-    yd3 --> ya
-    yd4 --> ya
+        yd1[" "]
+        yd2[" "]
+        yd3[" "]
 
-    zd1 --> za
-    zd2 --> za
-    zd3 --> za
-    zd4 --> za
+        yc1 --> yd1
+        yc2 --> yd2
+        yc3 --> yd3
 
-    %% Product Prices
-    xr["Product Price"]
-    xa --> xr
-    yr["Product Price"]
-    ya --> yr
-    zr["Product Price"]
-    za --> zr
+        zd1[" "]
+        zd2[" "]
+        zd3[" "]
 
-    %% Aggregate Portfolio
-    pa(["Aggregate portfolio"])
-    v --> pa
-    xr --> pa
-    yr --> pa
-    zr --> pa
-  end
+        zc1 --> zd1
+        zc2 --> zd2
+        zc3 --> zd3
 
-  id3 -- "4. The pricer submits a subgraph" --> subtasks
+        xa["Aggregate"]
+        ya["Aggregate"]
+        za["Aggregate"]
 
-  %% Final Results
-  id5["Final Portfolio Price"]
-  id4 -- "3. User waits for the result availability and downloads the result" --> id5
-  pa --> id5
+        xd1 --> xa
+        xd2 --> xa
+        xd3 --> xa
+
+        yd1 --> ya
+        yd2 --> ya
+        yd3 --> ya
+
+        zd1 --> za
+        zd2 --> za
+        zd3 --> za
+
+
+        xr["Product Price"]
+        xa --> xr
+
+        yr["Product Price"]
+        ya --> yr
+
+        zr["Product Price"]
+        za --> zr
+
+        pa["Aggregate Portfolio"]
+
+        v --> pa
+        xr --> pa
+        yr --> pa
+        zr --> pa
+    end
+
+    id3 -- "4: The pricer submits a graph for each complex product and the result of all vanilla products" --> Subtasks
+
+    id5["Final Portfolio Price"]
+
+    id4 -- "3: User waits for result availability and downloads the result" --> id5
+    pa --> id5
 
 ```
 
