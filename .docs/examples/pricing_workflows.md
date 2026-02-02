@@ -1,42 +1,69 @@
 # Pricing Workflows with Pymonik
 
-This page illustrates two common pricing workflows built on top of **ArmoniK** using **Pymonik**:
+This document provides a detailed overview of two prevalent pricing workflows that are constructed using [**ArmoniK**](https://github.com/aneoconsulting/ArmoniK), a hybrid framework designed to simplify the development of distributed applications, particularly in high-performance computing (HPC) and High Throughput environments, and
+[**PymoniK**](https://github.com/aneoconsulting/PymoniK), a Python framework designed to interface with ArmoniK seamlessly.
 
-* **Scenario 1** – A simple, synchronous pricing workflow
-* **Scenario 2** – A scalable, adaptive pricing workflow using subtasking and dynamic task graphs
+## Pricing Workflow Scenarios
 
-For each scenario, we explain:
+The document specifically covers two distinct scenarios in order to illustrate the usage and versatility of these tools:
 
-* The **end-to-end workflow** from the user’s perspective
-* What **ArmoniK** does under the hood
-* How to **implement the workflow in Python** using Pymonik
+* **Scenario 1** – This scenario focuses on a straightforward, synchronous pricing workflow. It is designed to illustrate how pricing tasks can be executed in a linear fashion, with each step waiting for the previous one to complete before moving forward.
 
-The examples assume:
+* **Scenario 2** – In contrast, this scenario showcases a more advanced and scalable pricing workflow that incorporates subtasking and dynamic task graphs. This approach allows for a more flexible execution of pricing tasks, enabling the system to adapt to varying demands by breaking down tasks into smaller subtasks that can run concurrently.
 
-* You have an ArmoniK cluster available
-* You are using a Python-based worker image
-* You are familiar with the basics of Pymonik tasks, invocation, and result handles
+### Breakdown of Each Scenario
+
+For both scenarios, the document systematically explains several key aspects:
+
+* **End-to-End Workflow** – We provide an overview of the entire workflow from the user's point of view. This includes each interaction the user has with the system, detailing how the pricing requests are submitted and processed sequentially or concurrently.
+
+* **ArmoniK’s Internal Functions** – An in-depth look at what happens behind the scenes within ArmoniK during the workflow execution. This includes explanations of how tasks are scheduled, resources are managed, and results are compiled to ensure efficient processing.
+
+* **Implementation in Python** – A practical guide on how to implement each workflow scenario using PymoniK within a Python environment. This section offers code snippets and explanations to help users understand how to leverage the library effectively for their pricing needs.
+
+### Prerequisites for Understanding the Examples
+
+The examples provided throughout the document are based on the following assumptions :
+
+* **ArmoniK Cluster** – It is expected that the reader has access to an operational ArmoniK cluster, which serves as the foundation for running distributed pricing tasks.
+
+* **Python-Based Worker Image** – The document assumes that users are working with a worker image that is compatible with Python, ensuring that the examples can be executed without compatibility issues.
+
+* **Basic Knowledge of PymoniK** – A fundamental understanding of PymoniK’s tasks, how to invoke them, and how to handle results is assumed. This prior knowledge will enable readers to follow the implementation steps more effectively.
+
 
 ---
 
 ## Scenario 1 – Simple Pricing Workflow
 
-### Overview
+This scenario illustrates the a basic and direct pricing interaction pattern supported by ArmoniK.
+It is intentionally minimal and synchronous, so it is straighforward to understand and ideal as a
+starting point for new users. In this workflow:
 
-This scenario represents the simplest interaction pattern:
+1. The user prepares all required input data locally, including:
+   * Market data (e.g., spot prices, rates, volatilities)
+   * Product or instrument definitions (e.g., an option with a notional)
+   * Any additional pricing parameters
+2. The user submits a **single pricing task** to ArmoniK.
+3. The user waits synchronously for the task to complete.
+4. Once execution finishes, the pricing result is retrieved and returned to the user.
 
-1. The user provides input data (market data, product definition, parameters)
-2. The user submits a pricing task
-3. The user waits for the result
-4. The result is downloaded and returned to the user
+There is no task decomposition, no fan-out/fan-in logic, and no dependency management.
+The entire pricing request is handled as one atomic unit of work.
 
-This model is ideal for:
+This interaction model is particularly well suited for:
 
-* Single products
-* Fast pricing models
-* Interactive or synchronous use cases
+* Pricing a single financial instrument
+* Lightweight or fast pricing models
+* Interactive workflows (e.g., notebooks, scripts, UI-driven tools)
+* Situations where immediate feedback is required
+
+---
 
 ### Workflow Diagram
+
+The diagram below shows the logical flow of data and control between the user, ArmoniK, and the pricing function.
+
 
 ```mermaid
 graph TD
@@ -57,19 +84,37 @@ graph TD
 
 ```
 
+Hence:
+
+- The user is responsible for assembling the input data (portfolio definition and market data).
+- The pricing task consumes these inputs and performs the computation.
+- ArmoniK executes the task remotely and produces a final portfolio price.
+- The user explicitly waits for the computation to complete and then retrieves the result.
+
 ### What ArmoniK Does
 
-* Receives a single task submission
-* Schedules the task on an available worker
-* Executes the pricing function remotely
-* Stores the result in the distributed result store
-* Makes the result available for download
+From ArmoniK’s point of view, this scenario follows a simple and linear execution path:
 
-No dynamic task graph or subtasking is involved.
+- Receives a single pricing task submission from the client
+- Places the task in the scheduler queue
+- Assigns the task to an available worker node
+- Executes the pricing function in a distributed environment
+- Persists the final result in the distributed result store
+- Makes the result available for download by the client
+
+Because the task is fully self-contained:
+
+- No dynamic task graph is created
+- No subtasks are generated
+- No dependency resolution is required
+- No intermediate results are exposed
 
 ### Example Code
 
-```python
+The following example demonstrates how to define and invoke a simple pricing task using PymoniK.
+
+```{code-block} python
+:linenos:
 from pymonik import Pymonik, task
 
 # A simple pricing task
@@ -86,6 +131,23 @@ with Pymonik(endpoint="localhost:5001"):
     result = price_vanilla.invoke(option, market_data).wait().get()
     print("Price:", result)
 ```
+
+#### Step-by-Step Explanation
+
+##### Task definition:
+
+* Line 1 imports the ArmoniK client (Pymonik) and the `@task` decorator.
+* Line 4 marks `price_vanilla` as a remotely executable ArmoniK task.
+* Lines 5–7 define the pricing logic. All required inputs are passed as arguments, making the task fully self-contained and serializable.
+
+##### User workflow:
+
+* Line 10 opens a connection to the ArmoniK control plane using a context manager. Here we assume that the cluster is listening on `localhost` at port `5001`.
+* Lines 11-12 define the product data and market data locally on the client.
+* Line 14 submits the task for execution, waits synchronously for completion, and retrieves the result.
+* Line 15 outputs the final price to the user.
+
+From the user’s perspective, the call behaves much like a local function call, while ArmoniK transparently handles remote execution and scheduling.
 
 ### Key Characteristics
 
