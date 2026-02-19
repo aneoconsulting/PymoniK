@@ -12,6 +12,7 @@ Welcome to PymoniK's documentation!
    examples/monte_carlo
    examples/pong_training
    examples/raytracing
+   examples/pricing_workflows
    development/development
    development/contribution
    important-considerations
