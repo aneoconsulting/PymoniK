@@ -1,5 +1,9 @@
 name: "Publish PymoniK package to PyPI"
 
+# Builds and publishes the pymonik package on every published GitHub
+# release. The repo is now flat (pyproject.toml at root, src/ layout),
+# so no working-directory hop is needed.
+
 on:
   release:
     types: ["published"]
@@ -16,13 +20,13 @@ jobs:
         uses: astral-sh/setup-uv@v3
 
       - name: Set up Python
-        run: uv python install 3.10.12  # 
-        working-directory: pymonik
+        # Match the requires-python = "==3.11.*" floor in pyproject.toml.
+        # Cloudpickle is not cross-minor, so the published wheel pins to
+        # 3.11; a future release matrix can publish 3.12 separately.
+        run: uv python install 3.11
 
       - name: Build
         run: uv build
-        working-directory: pymonik
 
       - name: Publish
         run: uv publish -t ${{ secrets.PYPI_TOKEN }}
-        working-directory: pymonik

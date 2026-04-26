@@ -1,21 +1,104 @@
 # Contributing
 
-This doesn't differ from our other projects ([Read ArmoniK.CLI's CONTRIBUTING.md](https://github.com/aneoconsulting/ArmoniK.CLI/blob/main/CONTRIBUTING.md)).
+Thank you for considering a contribution. PymoniK is a small,
+opinionated SDK and we'd like to keep it that way — but there's
+plenty to do, and outside perspectives are welcome.
 
-## Open Issues
+For repo-wide conventions, see ANEO's
+[contribution guidelines on ArmoniK.CLI](https://github.com/aneoconsulting/ArmoniK.CLI/blob/main/CONTRIBUTING.md);
+PymoniK follows the same shape.
 
-Here's a non-exhaustive list of things that are outright/partially missing from PymoniK that we'd like to see added in: 
+## Before you start
 
-- **Unit tests, end-to-end tests** : This project doesn't have any testing associated to it, 0% code coverage. We'd like to change this.
-- **More sophisticated examples** : We'd like to add even more examples and tutorials of common use cases that use ArmoniK under the hood.
-- **PymoniK logger** : The session created/closed/cancelled prints and the different errors should be logged instead of being printed.
-- **Local PymoniK** : Once of the big advantages of the way things have been coded is being able to switch from/to a remote/local context by just removing the `invoke` methods. This could be done even better, by adding a `local=True` flag to PymoniK that makes it so invokes are executed as regular function calls that run locally. The challenge is mainly handling `Pymonik.put`s and the map_invoke. 
-- **Rename `ResultHandle` to `ObjectHandle`** : The naming of `ResultHandle` was choosen because invocations return results, but as it turns out, these results are also then served as inputs. It'd be better for naming (especially since you can put things onto ArmoniK) to rename `ResultHandle` to the more generic `ObjectHandle`.
-- **Cleaner sub-tasking** : Subtasking requires the user to pass in a `delegate=True` flag to invokes, this isn't particularly clean or nice. There must be a better way of doing it. 
-- **Tasks returning multiple results**: As of right now, a task can only return a single result object (even when you return a tuple). There should be support for cases where you'd like to return multiple results from a task and not have them be grouped up into one (multiple smaller objects being passed onto multiple tasks). We think this change would be easier to implement once sub-tasking is in place, since it also involves analyzing what the user will return. There should be pre-execution tests to check if the user is returning a different number of results in different branches of the task and that should result in a failure (invalid task). 
-- **`results.as_completed`** : For more sophisticated and better time-to-execute, we'd like to implement a method for `MultiResultHandle` that allows the user to for instance loop through a `MultiResultHandle` and have the code execute as the result is done/retrieved. Moreover, as a side-effect, having this feature would allow for the usage of `tqdm` to create progress bars which is also really nice. 
-- **Intermediate Objects** : Support being able to create/download ArmoniK Objects (Intermediate results) within tasks. The download part would require `GetDirectData` in the Python API.   
-- **Remote to local error propagation** : Supply an additional "error name" to created tasks, when a result creation fails, we create this result, locally we can retrieve the remote stack trace using `my_result.error()` if we try-except, either that are we enrich the local result failure grpc exception with the remote one. 
-- **Test JIT-ing** : jitting tasks using namba/taichi if they're pure for additional performance. (Should just test if it'd work as intended..)
-- **More sophisticated result deserialization**: Right now it's just first-level depickling, it'd be nice to be able to pass in a dict that has ResultHandle values for example and be able to dynamically fetch those but that'd add a lot of complexity to data dependencies that'd need to be handled. There has to be a nice way of doing this and it's worth exploring
-- **PymoniK Visualizer**: With the current implementation of invoke/map_invoke, we can make it so you can surround your PymoniK context with a Grapher context that dynamically builds up a visualization of your task graph that you can then save and look at/analyze/vizualize later.  
+- For non-trivial changes, open an issue to discuss the approach
+  before writing code. Saves rounds.
+
+## What we'd particularly like help with
+
+Roughly in priority order — none of these are claimed; happy to
+talk through any of them.
+
+### Production-readiness
+
+- **`pymonik image build` CLI.** Read the user's `pyproject.toml`,
+  render a Dockerfile from a template, run `docker build`, print the
+  tag. The most-asked-for missing piece.
+- **OIDC / bearer-token credentials.** The `Credentials` class only
+  handles mTLS. Ship a `BearerCredentials(token_provider=...)` that
+  plugs into the gRPC channel via the metadata callback.
+- **`pymonik doctor` CLI.** Hits the cluster's `Versions` and
+  `Health` services, reports cluster compatibility with the local
+  pymonik version, surfaces obvious misconfigs (events stream
+  reachable, partition exists, AKCONFIG sane).
+
+### Observability
+
+- **Wire OTel into ArmoniK upstream** so cluster-side spans (polling
+  agent, control plane, agent sidecar) chain into PymoniK's. The W3C
+  trace context already propagates; the cluster just needs to emit
+  spans under it. This is an upstream contribution, not a PymoniK PR.
+- **Notebook display hooks.** `Future.__repr__` rendering a progress
+  bar in Jupyter; `FutureList` showing a per-task heatmap.
+
+### Performance
+
+- **Cross-session blob reuse.** Use ArmoniK's `Results.import_data` to
+  bind a fresh result id to data already uploaded in a prior session,
+  driven by a local `~/.cache/pymonik/blobs/` hash-to-opaque-id index.
+- **Per-session warm subprocess** for `deps=` + `isolate=True`. Spawn
+  one child Python at session-open time, feed tasks through a Unix
+  socket. Drops per-task startup from ~500 ms to ~1 ms while
+  preserving subprocess isolation.
+
+### Async core
+
+- Drop the threading completion loop, port the events stream to
+  `grpc.aio`, unify `Future` on a single `anyio.Event`. The threading
+  bridge in `Future` is the largest piece of accidental complexity in
+  the codebase.
+
+### Tests and examples
+
+- More end-to-end tests against a `testcontainers`-spun ArmoniK.
+- `hypothesis` round-trip tests for the envelope and refs.
+
+### Documentation
+
+- This doc tree is a fresh rewrite; it'll have rough edges. Reading
+  through any of the guides and filing an issue (or PR draft) for
+  things that confused you is genuinely valuable.
+- Worked examples for fault tolerance — show what happens when a
+  worker pod gets evicted mid-task, and how `retries=` covers it.
+
+## Small but appreciated
+
+- Typo fixes, dead-link fixes, doctest fixes.
+- Ruff / pyright cleanups in `_internal/`.
+- More attribute coverage on existing OTel spans (anything that'd
+  help filter in a UI).
+
+## What we generally don't want
+
+- **Major API churn** — the public surface (decorator, `.spawn`,
+  `.map`, `Future`, `Blob`, `Materialize`) is mostly settled.
+  Suggest naming changes via an issue first; don't rename in a PR.
+- **Adding heavy dependencies** to the runtime. The current set is
+  deliberate. New deps need a strong "it would be much worse to
+  hand-roll this" argument.
+- **Hiding ArmoniK from users.** PymoniK wraps the lower-level
+  `armonik` package; it doesn't try to replace it. Anywhere you'd
+  reach for `armonik.client.*`, that should still work alongside the
+  PymoniK API.
+
+## How to ship a PR (when you have permissions)
+
+The maintainer's workflow:
+
+1. Local commits, no force pushes to shared branches.
+2. Run the fast suite: `uv run pytest -m "not slow"`.
+3. Run pyright: `uv run basedpyright src/pymonik`.
+4. Run ruff: `uv run ruff check && uv run ruff format`.
+5. If you touched `worker.py` or anything in `_internal/`, rebuild
+   the worker image and restart the partition; rerun a
+   representative example end-to-end against the rebuilt cluster.
+6. Open the PR with a clear description.
