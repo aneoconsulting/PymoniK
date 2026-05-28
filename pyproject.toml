@@ -3,11 +3,11 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
+description = "Python framework for writing distributed programs that run on an ArmoniK cluster."
 name = "pymonik"
-version = "2.0.0a0"
-description = "Greenfield v2 of the PymoniK SDK for ArmoniK — anyio-first, msgspec-wire, easy to start."
+version = "1.0.0a0"
 readme = "README.md"
-requires-python = "==3.11.*"  # must match the worker image python; cloudpickle is not cross-minor
+requires-python = "==3.11.*" # must match the worker image python
 dependencies = [
     "armonik>=3.25.0",
     "anyio>=4.3",
@@ -37,6 +37,12 @@ otel = [
     # chain its server-side spans into our trace.
     "opentelemetry-instrumentation-grpc>=0.48b0",
 ]
+# Optional Marimo integration (ADR-0010). Pulls anywidget for the
+# custom components and marimo itself for the running_in_notebook
+# detection and mo.ui.anywidget wrapper. The core library imports
+# nothing from these — installation is purely opt-in.
+marimo = ["marimo>=0.10", "anywidget>=0.9"]
+mcp = ["mcp"]
 
 [project.scripts]
 pymonik-worker = "pymonik.worker:run"

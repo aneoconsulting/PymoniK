@@ -9,7 +9,7 @@ Subcommand layout (current state — many are stubs):
     pymonik image push      # push to a registry (stub)
     pymonik image list      # show baked images (stub)
     pymonik logs <task>     # stream worker stdout/stderr (stub)
-    pymonik replay <task>   # local replay of a failed task (stub)
+    pymonik replay {run,inspect,shell,pdb} <task>   # local replay (MVP)
 
 The doctor command is wired up; the rest are scaffolded so users can
 discover them via ``pymonik --help`` and so future PRs land in a
@@ -21,6 +21,8 @@ from __future__ import annotations
 import rich_click as click
 
 from pymonik.cli.doctor import doctor as _doctor_cmd
+from pymonik.cli.mcp import mcp as _mcp_grp
+from pymonik.cli.replay import replay as _replay_cmd
 
 
 @click.group(
@@ -40,6 +42,8 @@ def cli() -> None:
 # ---------- top-level commands ----------
 
 cli.add_command(_doctor_cmd)
+cli.add_command(_mcp_grp)
+cli.add_command(_replay_cmd)
 
 
 @cli.command("run")
@@ -96,14 +100,6 @@ def image_list() -> None:
 def logs(task_id: str, follow: bool) -> None:
     """[stub] Stream a task's worker stdout/stderr."""
     click.echo("pymonik logs: not yet implemented", err=True)
-    raise SystemExit(2)
-
-
-@cli.command("replay")
-@click.argument("task_id")
-def replay(task_id: str) -> None:
-    """[stub] Re-run a failed task locally with its captured inputs."""
-    click.echo("pymonik replay: not yet implemented", err=True)
     raise SystemExit(2)
 
 

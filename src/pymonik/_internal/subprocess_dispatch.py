@@ -88,21 +88,31 @@ def _parent_pythonpath() -> str:
 
 def run_in_subprocess(
     *,
-    env_spec: EnvSpec,
+    env_spec: EnvSpec | None,
     envelope_bytes: bytes,
     data_deps: Mapping[str, bytes],
     timeout_s: float | None = None,
 ) -> bytes:
     """Build (or reuse) the venv, dispatch the task, return cloudpickled result.
 
+    When ``env_spec`` is ``None`` (or has no deps), skip the venv build
+    and fork ``sys.executable`` directly — the child still runs the
+    same task_runner pipeline, just against the parent's interpreter
+    rather than a deps-isolated venv. Used by ``pymonik replay`` for
+    tasks that ran on the worker's base interpreter. (Eventually this can also let us easily change
+    Python versions on remote env.. good side-effect?)
+
     Raises :class:`TaskFailed` with the child's traceback on user-code
     failure; raises :class:`PymonikError` on infra failure (env build,
     subprocess crash, framing mismatch).
     """
-    venv_dir = ensure_env(env_spec)
-    py = _venv_python(venv_dir)
-    if not py.exists():
-        raise PymonikError(f"venv python missing after build: {py}")
+    if env_spec is not None and env_spec.deps:
+        venv_dir = ensure_env(env_spec)
+        py = _venv_python(venv_dir)
+        if not py.exists():
+            raise PymonikError(f"venv python missing after build: {py}")
+    else:
+        py = Path(sys.executable)
 
     env = os.environ.copy()
     env["PYTHONPATH"] = _parent_pythonpath()
@@ -112,8 +122,9 @@ def run_in_subprocess(
     # Suppress user-site so the child stays isolated to the venv.
     env["PYTHONNOUSERSITE"] = "1"
     # Apply EnvSpec.env on top — user vars win.
-    for k, v in env_spec.env:
-        env[k] = v
+    if env_spec is not None:
+        for k, v in env_spec.env:
+            env[k] = v
 
     proc = subprocess.Popen(
         [str(py), "-m", "pymonik._internal.task_runner"],
