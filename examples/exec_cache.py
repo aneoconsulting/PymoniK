@@ -19,8 +19,8 @@ Caching skips automatically when:
 Run twice. First run hits the cluster (or LocalCluster); second run
 shows hits and finishes in milliseconds.
 
-    uv run python examples/exec_cache.py
-    uv run python examples/exec_cache.py     # second run = hits
+    uv run examples/exec_cache.py
+    uv run examples/exec_cache.py     # second run = hits
     uv run pymonik cache stats               # peek inside
     uv run pymonik cache clear --yes         # wipe between experiments
 
@@ -42,7 +42,7 @@ from pymonik.testing import LocalCluster
 def expensive_pure(n: int) -> int:
     """Pretend-expensive computation; deterministic so the cache is valid."""
     current().log.info("running expensive_pure", n=n)
-    time.sleep(0.3)  # simulate real work
+    time.sleep(1)  # simulate real work
     return sum(i * i for i in range(n))
 
 
@@ -56,15 +56,14 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--cache-dir",
-        default=str(Path.home() / ".cache" / "pymonik-example"),
         help="Cache root for this demo (default keeps it out of the global cache).",
     )
     args = ap.parse_args()
 
     print(f"using cache at {args.cache_dir}")
 
-    with LocalCluster(cache=args.cache_dir) as client:
-        with client.session() as s:
+    with pymonik.PymonikClient(cache=args.cache_dir if args.cache_dir else True) as client:
+        with client.session(partition="pymonikv1") as s:
             inputs = [10_000, 20_000, 30_000, 40_000]
 
             t0 = time.monotonic()

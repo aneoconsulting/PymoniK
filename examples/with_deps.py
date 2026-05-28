@@ -51,7 +51,7 @@ def main() -> None:
     pymonik.enable_logging()
     ap = argparse.ArgumentParser()
     ap.add_argument("--endpoint", default=None)
-    ap.add_argument("--partition", default="pymonik")
+    ap.add_argument("--partition", default="pymonikv1")
     args = ap.parse_args()
 
     with PymonikClient(endpoint=args.endpoint) as client:

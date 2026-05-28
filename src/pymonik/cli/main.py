@@ -18,7 +18,7 @@ predictable place.
 
 from __future__ import annotations
 
-import click
+import rich_click as click
 
 from pymonik.cli.doctor import doctor as _doctor_cmd
 

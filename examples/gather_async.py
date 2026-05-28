@@ -24,8 +24,7 @@ import pymonik
 @task
 def slow_double(x: int) -> int:
     # Random short delay so the fan-out has interesting completion order.
-    import time as _t
-    _t.sleep(0.1 + 0.6 * random.random())
+    time.sleep(0.1 + 0.6 * random.random())
     return x * 2
 
 

@@ -5,10 +5,7 @@ component-wise-adds the base case and concatenates up the tree. The
 aggregation at each level is delegated to a sub-task so the parent's
 expected output is fulfilled by the child (no intermediate hops).
 
-Uses plain Python lists instead of numpy so the default worker image
-doesn't need scipy/numpy baked in.
-
-    uv run python examples/adaptive_vector_addition.py --partition pymonikv1
+    uv run python examples/adaptive_vector_addition.py --partition <pymonik-partition> --size <vector-length>
 """
 
 from __future__ import annotations

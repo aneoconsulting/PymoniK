@@ -5,7 +5,8 @@ Two flows:
 1. ``future.cancel()`` — cancels a single task via ArmoniK ``CancelTasks``.
    The future resolves locally with :class:`TaskCancelled` immediately;
    the task may run briefly longer on the worker until it checks in via
-   ``pymonik.current().cancel_if_requested()``.
+   ``pymonik.current().cancel_if_requested()``. 
+   # NOTE!!! This behavior should be implemented in the `armonik` python package 
 
 2. ``session.cancel()`` — cancels every in-flight task in the session
    via ``CancelSession``. All pending futures resolve with

@@ -7,12 +7,12 @@ Three flows in one example:
    specific path; the task parameter receives a ``pathlib.Path`` to it.
 3. Auto-spill — a large plain-Python arg (above the spill threshold) is
    transparently uploaded and rewired as a data dependency. User code looks
-   identical to the inline form.
+   identical to the inline form (the difference is that as a data dependency, it's more re-usable without re-uploading).
 
 Also demonstrates content-hash dedup: the second upload of the same bytes
 reuses the first result id and skips the network round-trip.
 
-    uv run python examples/blobs.py --partition pymonikv1
+    uv run python examples/blobs.py --partition <pymonik-partition>
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def main() -> None:
                 # (1) Explicit blob: file bytes → delivered as `bytes`.
                 weights = blob.upload(weights_path)
                 print("uploaded:", weights)
-
+                print("attempting to upload again")
                 # Dedup: second call finds the cache and returns the same handle shape.
                 weights_again = blob.upload(weights_path)
                 assert weights.result_id == weights_again.result_id, "dedup failed"
@@ -85,8 +85,8 @@ def main() -> None:
                 f2 = read_config.spawn(cfg)
                 f3 = sum_samples.spawn(big)
 
-                print(f1.result(timeout=120))
-                print(f2.result(timeout=120))
+                print(f1.result())
+                print(f2.result())
                 print(f"sum_samples -> {f3.result(timeout=120):.2f}")
 
 

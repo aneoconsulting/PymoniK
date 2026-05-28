@@ -3,7 +3,7 @@
 Map N parallel Monte-Carlo estimates, then reduce via a single task whose
 inputs are the fan-out futures. Client blocks only on the terminal result.
 
-    uv run python examples/estimate_pi.py --partition pymonikv1 --n 32 --samples 200000
+    uv run examples/estimate_pi.py --partition <pymonik-partition> --n 32 --samples 200000
 """
 
 from __future__ import annotations

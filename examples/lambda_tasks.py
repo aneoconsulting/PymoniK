@@ -24,10 +24,10 @@ def main() -> None:
     mul = Task(lambda a, b: a * b, name="mul_lambda")
 
     with PymonikClient() as client:
-        with client.session(partition=args.partition) as s:
+        with client.session(partition=args.partition):
             f1 = add.spawn(1, 2)
-            f2 = mul.spawn(f1, 10)  # f1 is a Future → wired as data_dependency
-            print("(1 + 2) * 10 =", f2.result(timeout=60))
+            f2 = mul.spawn(f1, 10)  
+            print("(1 + 2) * 10 =", f2.result())
 
 
 if __name__ == "__main__":

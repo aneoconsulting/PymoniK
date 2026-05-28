@@ -62,11 +62,6 @@ def main() -> None:
                 result = flaky_with_filter.spawn(label).result(timeout=120)
                 print(f"flaky_with_filter: {result}  ({time.monotonic() - t0:.1f}s)")
             except Exception as e:
-                # If the worker pod's /tmp is shared across our retries (same
-                # pod handled both attempts), the third attempt succeeds.
-                # If retries land on fresh pods, the counter resets and we'd
-                # exhaust the budget — that's a property of how pods scale
-                # rather than a retry-logic bug.
                 print(f"flaky_with_filter: exhausted -> {e}")
 
             # 2) Unmatched exception type — no retry, raises immediately.

@@ -3,7 +3,7 @@
 Mirrors ``examples/hello.py`` but runs on the user's asyncio loop.
 Submission stays sync (spawn returns a Future), waiting is asynchronous.
 
-    uv run python examples/async_hello.py --partition pymonikv1
+    uv run python examples/async_hello.py --partition <pymonik-partition>
 """
 
 from __future__ import annotations
