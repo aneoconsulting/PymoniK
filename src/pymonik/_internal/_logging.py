@@ -31,12 +31,28 @@ import structlog
 LIB_NAME = "pymonik"
 
 
-def _processor_chain(use_color: bool):
+# Concrete renderers, instantiated once and dispatched per record so the
+# active choice can be flipped after loggers have been built.
+_RENDERERS = {
+    "color": structlog.dev.ConsoleRenderer(colors=True),
+    "plain": structlog.dev.ConsoleRenderer(colors=False),
+    "json": structlog.processors.JSONRenderer(),
+}
+
+
+def _render(logger, method_name, event_dict):
+    # Read ``_OPTS`` at call time (not at logger-construction time), so
+    # toggling the renderer in :func:`enable_logging` takes effect on
+    # already-bound module-level loggers like ``log = get_logger(__name__)``.
+    return _RENDERERS[_OPTS["renderer"]](logger, method_name, event_dict)
+
+
+def _processor_chain():
     return [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
-        structlog.dev.ConsoleRenderer(colors=use_color),
+        _render,
     ]
 
 
@@ -56,7 +72,7 @@ def get_logger(name: str = LIB_NAME):
         full = f"{LIB_NAME}.{short}"
     return structlog.wrap_logger(
         logging.getLogger(full),
-        processors=_processor_chain(use_color=_OPTS["color"]),
+        processors=_processor_chain(),
     )
 
 
@@ -64,28 +80,35 @@ def enable_logging(
     level: Union[int, str] = logging.INFO,
     *,
     color: bool = True,
+    json: bool = False,
     stream=None,
 ) -> None:
-    """Turn on pretty console logging for pymonik.
+    """Turn on console logging for pymonik.
 
     Args:
         level: stdlib logging level (``"INFO"`` / ``"DEBUG"`` / int).
         color: use ANSI colours in the renderer (auto-disabled when not
-            attached to a TTY for piped output).
+            attached to a TTY for piped output). Ignored when ``json=True``.
+        json: emit one structured JSON record per line. Right choice for
+            log-shipping pipelines (Seq's CLEF ingest, ELK, etc.); set by
+            the worker entrypoint so pod logs are structured downstream.
         stream: where to write log records. Defaults to ``sys.stderr``.
 
     Idempotent: subsequent calls replace the previous handler so you
-    can flip the level without leaking handlers.
+    can flip the level / renderer without leaking handlers.
     """
     if isinstance(level, str):
         level = getattr(logging, level.upper())
     if stream is None:
         stream = sys.stderr
-    if color and not getattr(stream, "isatty", lambda: False)():
-        # Don't emit ANSI codes into a pipe/file.
-        color = False
 
-    _OPTS["color"] = color
+    if json:
+        _OPTS["renderer"] = "json"
+    elif color and getattr(stream, "isatty", lambda: False)():
+        _OPTS["renderer"] = "color"
+    else:
+        # Plain text for piped output: still readable, no ANSI bleed.
+        _OPTS["renderer"] = "plain"
 
     pmk = logging.getLogger(LIB_NAME)
     pmk.handlers.clear()
@@ -107,10 +130,11 @@ def silence_logging() -> None:
     pmk.propagate = False
 
 
-# Module-level state for the renderer's colour choice. Hardly ever
-# changes; held here so :func:`get_logger` can read it and so future
-# modules pick up a flipped colour mode.
-_OPTS: dict = {"color": True}
+# Module-level renderer choice. Default ``"plain"`` so module-level
+# ``log = get_logger(__name__)`` loggers — bound at import time before
+# ``enable_logging`` runs — don't emit ANSI into downstream sinks.
+# ``enable_logging`` flips this to ``"color"`` / ``"json"`` as requested.
+_OPTS: dict = {"renderer": "plain"}
 
 
 # Library-default: silent. Convention is to attach a NullHandler so

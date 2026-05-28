@@ -442,6 +442,11 @@ def run() -> None:
     :func:`pymonik.enable_logging` here. Override the level via
     ``PYMONIK_WORKER_LOG_LEVEL`` env var.
 
+    Worker logs ship as JSON (one record per line) so the polling
+    agent → k8s → Seq pipeline picks up structured fields instead of
+    a single opaque message string. Override the level via
+    ``PYMONIK_WORKER_LOG_LEVEL``.
+
     OTel: same auto-detect rule as on the client (env vars present →
     enabled). Workers typically inherit ``OTEL_EXPORTER_OTLP_ENDPOINT``
     from their pod env so they export to the same collector as the
@@ -451,7 +456,10 @@ def run() -> None:
 
     from pymonik._internal._logging import enable_logging
 
-    enable_logging(level=os.getenv("PYMONIK_WORKER_LOG_LEVEL", "INFO"))
+    enable_logging(
+        level=os.getenv("PYMONIK_WORKER_LOG_LEVEL", "INFO"),
+        json=True,
+    )
     _otel.setup(service_name=os.getenv("OTEL_SERVICE_NAME", "pymonik-worker"))
     _patch_process()
 
