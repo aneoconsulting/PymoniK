@@ -140,13 +140,18 @@ def test_submit_pipeline_injects_context(in_memory_exporter):
 
     spans_by_name = {s.name: s for s in in_memory_exporter.get_finished_spans()}
     assert "pymonik.submit" in spans_by_name
+    assert "pymonik.task.dispatch" in spans_by_name
     assert "pymonik.task.run" in spans_by_name
     submit = spans_by_name["pymonik.submit"]
+    dispatch = spans_by_name["pymonik.task.dispatch"]
     run = spans_by_name["pymonik.task.run"]
-    # Same trace, run is a descendant of submit.
-    assert run.context.trace_id == submit.context.trace_id
+    # All three share one trace.
+    assert run.context.trace_id == submit.context.trace_id == dispatch.context.trace_id
+    # Hierarchy: submit (client) -> task.dispatch (worker) -> task.run (user fn).
+    assert dispatch.parent is not None
+    assert dispatch.parent.span_id == submit.context.span_id
     assert run.parent is not None
-    assert run.parent.span_id == submit.context.span_id
+    assert run.parent.span_id == dispatch.context.span_id
 
 
 def test_submit_span_has_useful_attributes(in_memory_exporter):

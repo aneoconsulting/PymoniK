@@ -31,7 +31,7 @@ COPY --chown=armonikuser:armonikuser pyproject.toml README.md ./
 COPY --chown=armonikuser:armonikuser src/ ./src/
 
 RUN uv venv /app/.venv \
- && uv pip install --no-cache .
+ && uv pip install --no-cache '.[otel]'
 
 ENV PATH="/app/.venv/bin:${PATH}"
 ENV PYTHONUNBUFFERED=1

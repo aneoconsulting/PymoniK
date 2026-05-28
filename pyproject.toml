@@ -17,6 +17,14 @@ dependencies = [
     "structlog>=24.1",
     "pyyaml>=6.0.3",
     "click>=8.1",
+    # ``opentelemetry-instrumentation`` (pulled by the [otel] extra)
+    # imports ``pkg_resources`` at module load. setuptools >= 81
+    # dropped it. Pinning here (not in the [otel] extra) ensures
+    # ``uv sync`` without ``--extra otel`` doesn't pull a newer
+    # setuptools that would break the otel install path. Drop when
+    # opentelemetry-instrumentation migrates to importlib.metadata.
+    "setuptools<81",
+    "rich-click>=1.9.7",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +32,10 @@ otel = [
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-grpc>=1.27",
+    # gRPC client instrumentation auto-injects W3C traceparent into
+    # outgoing gRPC metadata; lets ArmoniK.Core's AspNetCore middleware
+    # chain its server-side spans into our trace.
+    "opentelemetry-instrumentation-grpc>=0.48b0",
 ]
 
 [project.scripts]
@@ -48,6 +60,7 @@ dev = [
     "opentelemetry-api>=1.27.0",
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    "opentelemetry-instrumentation-grpc>=0.48b0",
 ]
 
 [tool.ruff]

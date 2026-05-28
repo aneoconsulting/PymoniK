@@ -120,6 +120,11 @@ class Session:
         self._stop = threading.Event()
         self._runner: threading.Thread | None = None
         self._ctx_token: Any = None
+        # Long-lived OTel span covering the whole ``with`` block so
+        # every submit / blob upload / future wait inside nests into
+        # one trace instead of becoming its own root.
+        self._otel_session_span: Any = None
+        self._otel_session_token: Any = None
         # Set after ``cancel()``: the cluster has already terminated the
         # session, so we skip ``close_session()`` in ``__exit__`` to avoid
         # a noisy warning about "state that cannot be closed".
@@ -181,11 +186,33 @@ class Session:
         self._results = ArmoniKResults(channel)
         self._events = ArmoniKEvents(channel)
 
+        # Make the OTel auto-detection run before we open the long span,
+        # otherwise the span goes to a no-op tracer.
+        _otel.setup()
+
+        # Open the long-lived session span. Everything else inside the
+        # ``with`` block — submits, blob uploads, future waits, the
+        # session.open RPC sub-span below — nests under this so the
+        # whole thing shows up as one trace in Jaeger.
+        self._otel_session_span, self._otel_session_token = _otel.start_long_span(
+            "pymonik.session",
+            attrs={
+                "pymonik.partitions": ",".join(self._partitions),
+                "pymonik.completion": "events" if self._use_events else "poll",
+                "pymonik.attached": self._attach_to is not None,
+            },
+            kind="client",
+        )
+
         if self._attach_to is not None:
             # Attaching: skip create_session, trust the user-supplied id.
             # We don't validate the id exists up front — the first
             # submission RPC will fail clearly enough if it doesn't.
             self._session_id = self._attach_to
+            if self._otel_session_span is not None:
+                self._otel_session_span.set_attribute(
+                    "pymonik.session_id", self._session_id
+                )
             log.info(
                 "session attached",
                 session_id=self._session_id,
@@ -208,6 +235,10 @@ class Session:
                 )
                 if span is not None:
                     span.set_attribute("pymonik.session_id", self._session_id)
+                if self._otel_session_span is not None:
+                    self._otel_session_span.set_attribute(
+                        "pymonik.session_id", self._session_id
+                    )
             log.info(
                 "session opened",
                 session_id=self._session_id,
@@ -215,9 +246,17 @@ class Session:
                 completion="events" if self._use_events else "poll",
             )
 
+        # Copy the current ContextVars (including OTel's active span) into
+        # the runner thread so any RPC it makes — Events.GetEvents,
+        # Tasks.list_results during polling, Results.DownloadResultData
+        # on completion — chains under ``pymonik.session`` instead of
+        # opening a new trace root.
+        import contextvars
+
         target = self._events_loop if self._use_events else self._poll_loop
+        ctx = contextvars.copy_context()
         self._runner = threading.Thread(
-            target=target,
+            target=lambda: ctx.run(target),
             name=f"pymonik-{self._session_id}",
             daemon=True,
         )
@@ -249,6 +288,13 @@ class Session:
                 self._sessions.close_session(self._session_id)
             except Exception as e:
                 log.warning("close_session failed", error=str(e))
+
+        # End the long-lived OTel session span last so its duration
+        # covers everything else.
+        if self._otel_session_span is not None or self._otel_session_token is not None:
+            _otel.end_long_span(self._otel_session_span, self._otel_session_token)
+            self._otel_session_span = None
+            self._otel_session_token = None
 
     # ---- context manager (sync) ----
 
@@ -318,8 +364,14 @@ class Session:
                 fut._done.set()
                 fut._wake_async()
 
+        # Same context-propagation rationale as ``_open_resources``:
+        # the resubmit thread issues gRPC calls that should chain under
+        # the session's trace.
+        import contextvars
+
+        retry_ctx = contextvars.copy_context()
         threading.Thread(
-            target=_run,
+            target=lambda: retry_ctx.run(_run),
             name=f"pymonik-retry-{fut.task_id[:8]}",
             daemon=True,
         ).start()

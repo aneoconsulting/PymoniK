@@ -116,7 +116,10 @@ def setup(*, force: bool | None = None, service_name: str = "pymonik") -> bool:
         _enabled = True
         return True
 
-    resource = Resource.create({"service.name": service_name})
+    # The standard OTel env var wins over the constructor default; users
+    # expect ``OTEL_SERVICE_NAME=...`` to take effect without code change.
+    effective_name = os.getenv("OTEL_SERVICE_NAME") or service_name
+    resource = Resource.create({"service.name": effective_name})
     provider = TracerProvider(resource=resource)
 
     exporter = _build_default_exporter()
@@ -124,6 +127,39 @@ def setup(*, force: bool | None = None, service_name: str = "pymonik") -> bool:
         provider.add_span_processor(BatchSpanProcessor(exporter))
     _trace.set_tracer_provider(provider)
     _enabled = True
+
+    # Auto-instrument outgoing gRPC calls so the W3C ``traceparent``
+    # header lands in every RPC's metadata. ArmoniK.Core's AspNetCore
+    # middleware extracts it server-side and chains its activities
+    # under ours. The instrumentor is optional; if it can't be
+    # installed (missing dep, environment quirk), log loudly so the
+    # user knows the cluster-side spans won't link to client spans.
+    try:
+        from opentelemetry.instrumentation.grpc import (  # type: ignore[import-not-found]
+            GrpcInstrumentorClient,
+        )
+    except ImportError as e:
+        from pymonik._internal._logging import get_logger
+
+        get_logger(__name__).warning(
+            "otel: gRPC client instrumentation unavailable — "
+            "ArmoniK control-plane and agent spans won't chain into "
+            "client traces. Install pymonik[otel] (which pulls "
+            "opentelemetry-instrumentation-grpc).",
+            error=str(e),
+        )
+    else:
+        try:
+            GrpcInstrumentorClient().instrument()
+        except Exception as e:  # noqa: BLE001
+            from pymonik._internal._logging import get_logger
+
+            get_logger(__name__).warning(
+                "otel: gRPC client instrumentation failed to apply — "
+                "client traces will be disjoint from cluster-side spans.",
+                error=f"{type(e).__name__}: {e}",
+            )
+
     return True
 
 
@@ -219,6 +255,44 @@ def start_span(
             span.set_status(Status(StatusCode.ERROR, f"{type(e).__name__}: {e}"))
             span.record_exception(e)
             raise
+
+
+def start_long_span(
+    name: str,
+    *,
+    attrs: Mapping[str, Any] | None = None,
+    kind: str = "internal",
+) -> tuple[Any, Any]:
+    """Start a span that outlives a ``with`` block. Returns ``(span, token)``.
+
+    Use this for spans whose lifetime is tied to a Python object's
+    enter/exit (e.g. a Session that keeps the span open across many
+    method calls). Pair with :func:`end_long_span` to close.
+
+    Returns ``(None, None)`` when OTel is disabled — the caller can
+    pass these straight to :func:`end_long_span` without checking.
+    """
+    tracer = _tracer()
+    if tracer is None or not _AVAILABLE:
+        return (None, None)
+    span = tracer.start_span(
+        name, kind=_kind_for(kind), attributes=dict(attrs) if attrs else None
+    )
+    # Make the span the current context so anything started after it
+    # (start_span, start_as_current_span, ...) becomes a child.
+    ctx = _trace.set_span_in_context(span)
+    token = _otel_context.attach(ctx)
+    return span, token
+
+
+def end_long_span(span: Any, token: Any) -> None:
+    """Counterpart to :func:`start_long_span`. No-ops on (None, None)."""
+    if not _AVAILABLE:
+        return
+    if token is not None:
+        _otel_context.detach(token)
+    if span is not None:
+        span.end()
 
 
 def inject_context(carrier: dict[str, str]) -> None:

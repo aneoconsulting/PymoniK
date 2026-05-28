@@ -34,6 +34,7 @@ blocked on a data dep whose computation needs another thread). Pass
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import threading
 import traceback
@@ -255,6 +256,10 @@ class LocalSession:
         self._stop = threading.Event()
         self._spill_threshold = 1 << 30  # ~1 GiB; effectively never spill locally
         self._ctx_token: Any = None
+        # Long-lived OTel session span — same idea as the cluster Session:
+        # everything inside the ``with`` block nests into one trace.
+        self._otel_session_span: Any = None
+        self._otel_session_token: Any = None
 
     @property
     def session_id(self) -> str:
@@ -272,6 +277,18 @@ class LocalSession:
 
     def __enter__(self) -> "LocalSession":
         self._ctx_token = _current_session.set(self)
+        from pymonik._internal import _otel as _otel_mod
+
+        _otel_mod.setup()
+        self._otel_session_span, self._otel_session_token = _otel_mod.start_long_span(
+            "pymonik.session",
+            attrs={
+                "pymonik.partitions": ",".join(self._partitions),
+                "pymonik.session_id": self._session_id,
+                "pymonik.local": True,
+            },
+            kind="client",
+        )
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -286,11 +303,29 @@ class LocalSession:
             if self._ctx_token is not None:
                 _current_session.reset(self._ctx_token)
                 self._ctx_token = None
+            if self._otel_session_span is not None or self._otel_session_token is not None:
+                from pymonik._internal import _otel as _otel_mod
+
+                _otel_mod.end_long_span(self._otel_session_span, self._otel_session_token)
+                self._otel_session_span = None
+                self._otel_session_token = None
 
     # ---- context manager (async) ----
 
     async def __aenter__(self) -> "LocalSession":
         self._ctx_token = _current_session.set(self)
+        from pymonik._internal import _otel as _otel_mod
+
+        _otel_mod.setup()
+        self._otel_session_span, self._otel_session_token = _otel_mod.start_long_span(
+            "pymonik.session",
+            attrs={
+                "pymonik.partitions": ",".join(self._partitions),
+                "pymonik.session_id": self._session_id,
+                "pymonik.local": True,
+            },
+            kind="client",
+        )
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -305,6 +340,12 @@ class LocalSession:
             if self._ctx_token is not None:
                 _current_session.reset(self._ctx_token)
                 self._ctx_token = None
+            if self._otel_session_span is not None or self._otel_session_token is not None:
+                from pymonik._internal import _otel as _otel_mod
+
+                _otel_mod.end_long_span(self._otel_session_span, self._otel_session_token)
+                self._otel_session_span = None
+                self._otel_session_token = None
 
     # ---- blob upload (in-memory, content-hash dedup like Session) ----
 
@@ -488,8 +529,9 @@ class LocalSession:
                 attempt=fut._retry_attempt + 1,
             )
 
+        retry_ctx = contextvars.copy_context()
         threading.Thread(
-            target=_run,
+            target=lambda: retry_ctx.run(_run),
             name=f"pymonik-local-retry-{fut.task_id[-8:]}",
             daemon=True,
         ).start()
@@ -913,17 +955,6 @@ class LocalSession:
                     )
                     return
 
-            try:
-                func = cloudpickle.loads(envelope.function_pickle)
-                args, kwargs = cloudpickle.loads(envelope.args_pickle)
-                args = tuple(resolve_refs(a, data_deps) for a in args)
-                kwargs = {k: resolve_refs(v, data_deps) for k, v in kwargs.items()}
-            except Exception as e:
-                fut._resolve_error(
-                    TaskFailed(task_id, f"local envelope decode failed: {e!r}")
-                )
-                return
-
             # Worker-side context (logger, attempt, cancel hook).
             fake_th = _FakeTaskHandler(task_id=task_id, session_id=self._session_id)
             worker_ctx = WorkerContext(
@@ -938,16 +969,63 @@ class LocalSession:
 
                     with _otel_mod.use_extracted_context(dict(envelope.otel_context)):
                         with _otel_mod.start_span(
-                            "pymonik.task.run",
+                            "pymonik.task.dispatch",
                             attrs={
                                 "pymonik.func": envelope.func_name,
                                 "pymonik.task_id": task_id,
                                 "pymonik.attempt": envelope.attempt,
+                                "pymonik.data_deps": len(data_deps),
                                 "pymonik.local": True,
                             },
                             kind="server",
                         ):
-                            result = func(*args, **kwargs)
+                            with _otel_mod.start_span(
+                                "pymonik.task.decode",
+                                attrs={
+                                    "pymonik.fn_pickle_bytes": len(
+                                        envelope.function_pickle
+                                    ),
+                                    "pymonik.args_pickle_bytes": len(
+                                        envelope.args_pickle
+                                    ),
+                                },
+                            ):
+                                func = cloudpickle.loads(envelope.function_pickle)
+                                args, kwargs = cloudpickle.loads(envelope.args_pickle)
+                            if data_deps:
+                                with _otel_mod.start_span(
+                                    "pymonik.task.resolve_refs",
+                                    attrs={
+                                        "pymonik.data_deps": len(data_deps),
+                                        "pymonik.bytes_in": sum(
+                                            len(v) for v in data_deps.values()
+                                        ),
+                                    },
+                                ):
+                                    args = tuple(
+                                        resolve_refs(a, data_deps) for a in args
+                                    )
+                                    kwargs = {
+                                        k: resolve_refs(v, data_deps)
+                                        for k, v in kwargs.items()
+                                    }
+                            else:
+                                args = tuple(resolve_refs(a, data_deps) for a in args)
+                                kwargs = {
+                                    k: resolve_refs(v, data_deps)
+                                    for k, v in kwargs.items()
+                                }
+                            with _otel_mod.start_span(
+                                "pymonik.task.run",
+                                attrs={
+                                    "pymonik.func": envelope.func_name,
+                                    "pymonik.task_id": task_id,
+                                    "pymonik.attempt": envelope.attempt,
+                                    "pymonik.local": True,
+                                },
+                                kind="server",
+                            ):
+                                result = func(*args, **kwargs)
                 except TaskCancelled:
                     fut._resolve_error(TaskCancelled(task_id))
                     return

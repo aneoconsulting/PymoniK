@@ -101,6 +101,29 @@ def _dispatch_result(
     """
     from pymonik.multiresult import MultiResult, TailPromise
 
+    # Re-attach the propagated trace context so any span we open here
+    # (notably ``pymonik.task.send_results``) chains under
+    # ``pymonik.submit`` instead of becoming a new trace root.
+    with _otel.use_extracted_context(dict(envelope.otel_context)):
+        return _dispatch_result_inner(
+            result,
+            envelope=envelope,
+            task_handler=task_handler,
+            parent_output_ids=parent_output_ids,
+            session=session,
+        )
+
+
+def _dispatch_result_inner(
+    result: Any,
+    *,
+    envelope: env_mod.TaskEnvelope,
+    task_handler: TaskHandler,
+    parent_output_ids: list[str],
+    session: "WorkerSession",
+) -> Output:
+    from pymonik.multiresult import MultiResult, TailPromise
+
     multi_fields: tuple[str, ...] = envelope.multi_fields
 
     # ---- whole-task tail-call ----
@@ -191,7 +214,14 @@ def _dispatch_result(
                 pending_writes[oid] = cloudpickle.dumps(value)
 
         if pending_writes:
-            task_handler.send_results(pending_writes)
+            with _otel.start_span(
+                "pymonik.task.send_results",
+                attrs={
+                    "pymonik.outputs": len(pending_writes),
+                    "pymonik.bytes_out": sum(len(v) for v in pending_writes.values()),
+                },
+            ):
+                task_handler.send_results(pending_writes)
         log.info(
             "task completed (multi)",
             task_id=task_handler.task_id,
@@ -206,7 +236,15 @@ def _dispatch_result(
             f"worker error: task declared multi-output fields {list(multi_fields)} "
             f"but returned a {type(result).__name__} (expected MultiResult)."
         )
-    task_handler.send_results({parent_output_ids[0]: cloudpickle.dumps(result)})
+    pickled = cloudpickle.dumps(result)
+    with _otel.start_span(
+        "pymonik.task.send_results",
+        attrs={
+            "pymonik.outputs": 1,
+            "pymonik.bytes_out": len(pickled),
+        },
+    ):
+        task_handler.send_results({parent_output_ids[0]: pickled})
     log.info("task completed", task_id=task_handler.task_id, func=envelope.func_name)
     return Output()
 
@@ -295,43 +333,76 @@ def _process(task_handler: TaskHandler) -> Output:
                 prior_env = apply_env_overlay(envelope.env_spec.env)
 
         try:
-            func = cloudpickle.loads(envelope.function_pickle)
-            args, kwargs = cloudpickle.loads(envelope.args_pickle)
-            args = tuple(resolve_refs(a, data_deps) for a in args)
-            kwargs = {k: resolve_refs(v, data_deps) for k, v in kwargs.items()}
-
-            worker_ctx = WorkerContext(
-                task_handler,
-                grpc_context=_grpc_ctx_var.get(),
-                attempt=envelope.attempt,
-            )
-            session = WorkerSession(
-                task_handler, parent_output_ids=parent_output_ids
-            )
-
-            from pymonik.task import _current_session as _cs
-
-            ctx_token = ctx_mod._set(worker_ctx)
-            sess_token = _cs.set(session)
-            try:
-                # Re-attach the trace context the client injected, then
-                # open a worker-side span so the user function runs under
-                # a span that's a child of pymonik.submit.
-                otel_carrier = dict(envelope.otel_context)
-                with _otel.use_extracted_context(otel_carrier):
+            # Re-attach the trace context the client injected so all the
+            # phase spans below become children of pymonik.submit, then
+            # open one outer ``pymonik.task.dispatch`` span that covers
+            # every phase (decode → resolve → run → send) so the user
+            # can see where worker wall-time actually goes. Each phase
+            # is its own child for fine-grained timing.
+            otel_carrier = dict(envelope.otel_context)
+            with _otel.use_extracted_context(otel_carrier):
+                with _otel.start_span(
+                    "pymonik.task.dispatch",
+                    attrs={
+                        "pymonik.func": envelope.func_name,
+                        "pymonik.task_id": task_handler.task_id,
+                        "pymonik.attempt": envelope.attempt,
+                        "pymonik.data_deps": len(data_deps),
+                    },
+                    kind="server",
+                ):
                     with _otel.start_span(
-                        "pymonik.task.run",
+                        "pymonik.task.decode",
                         attrs={
-                            "pymonik.func": envelope.func_name,
-                            "pymonik.task_id": task_handler.task_id,
-                            "pymonik.attempt": envelope.attempt,
+                            "pymonik.fn_pickle_bytes": len(envelope.function_pickle),
+                            "pymonik.args_pickle_bytes": len(envelope.args_pickle),
                         },
-                        kind="server",
                     ):
-                        result: Any = func(*args, **kwargs)
-            finally:
-                _cs.reset(sess_token)
-                ctx_mod._reset(ctx_token)
+                        func = cloudpickle.loads(envelope.function_pickle)
+                        args, kwargs = cloudpickle.loads(envelope.args_pickle)
+
+                    if data_deps:
+                        with _otel.start_span(
+                            "pymonik.task.resolve_refs",
+                            attrs={
+                                "pymonik.data_deps": len(data_deps),
+                                "pymonik.bytes_in": sum(
+                                    len(v) for v in data_deps.values()
+                                ),
+                            },
+                        ):
+                            args = tuple(resolve_refs(a, data_deps) for a in args)
+                            kwargs = {
+                                k: resolve_refs(v, data_deps) for k, v in kwargs.items()
+                            }
+
+                    worker_ctx = WorkerContext(
+                        task_handler,
+                        grpc_context=_grpc_ctx_var.get(),
+                        attempt=envelope.attempt,
+                    )
+                    session = WorkerSession(
+                        task_handler, parent_output_ids=parent_output_ids
+                    )
+
+                    from pymonik.task import _current_session as _cs
+
+                    ctx_token = ctx_mod._set(worker_ctx)
+                    sess_token = _cs.set(session)
+                    try:
+                        with _otel.start_span(
+                            "pymonik.task.run",
+                            attrs={
+                                "pymonik.func": envelope.func_name,
+                                "pymonik.task_id": task_handler.task_id,
+                                "pymonik.attempt": envelope.attempt,
+                            },
+                            kind="server",
+                        ):
+                            result: Any = func(*args, **kwargs)
+                    finally:
+                        _cs.reset(sess_token)
+                        ctx_mod._reset(ctx_token)
         finally:
             if prior_env is not None:
                 restore_env_overlay(prior_env)
