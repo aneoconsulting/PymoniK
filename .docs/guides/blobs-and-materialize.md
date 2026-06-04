@@ -105,7 +105,7 @@ cache deduplicates them. On the worker, the bytes are unpacked into
 Limits to be aware of:
 
 - The zip is held in memory client-side. Multi-GB assets will hurt;
-  consider baking those into the worker image instead.
+  consider baking those into the worker image instead (or loading them into the worker from S3 storage, etc. depending on your use case).
 - File permissions inside the zip are normalised by Python's
   `zipfile`. If you need executable bits or symlinks, materialise
   individual files yourself and set `chmod` inside the task.

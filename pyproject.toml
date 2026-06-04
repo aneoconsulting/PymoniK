@@ -37,16 +37,11 @@ otel = [
     # chain its server-side spans into our trace.
     "opentelemetry-instrumentation-grpc>=0.48b0",
 ]
-# Optional Marimo integration (ADR-0010). Pulls anywidget for the
+# Optional Marimo integration. Pulls anywidget for the
 # custom components and marimo itself for the running_in_notebook
 # detection and mo.ui.anywidget wrapper. The core library imports
 # nothing from these — installation is purely opt-in.
-marimo = [
-    "marimo>=0.10",
-    "anywidget>=0.9",
-    "polars>=1.40.1",
-    "plotly>=6.7.0",
-]
+marimo = ["marimo>=0.10", "anywidget>=0.9", "polars>=1.40.1", "plotly>=6.7.0"]
 mcp = ["mcp"]
 
 [project.scripts]
@@ -59,7 +54,6 @@ packages = ["src/pymonik"]
 [dependency-groups]
 dev = [
     "ruff>=0.11",
-    "basedpyright>=1.18",
     "pytest>=8",
     # anyio ships its own pytest plugin; no separate pytest-anyio package.
     "trio>=0.27",
@@ -72,6 +66,7 @@ dev = [
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
     "opentelemetry-instrumentation-grpc>=0.48b0",
+    "ty>=0.0.43",
 ]
 
 [tool.ruff]
@@ -81,9 +76,8 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
-[tool.basedpyright]
-pythonVersion = "3.11"
-typeCheckingMode = "standard"
+[tool.ty.environment]
+python-version = "3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

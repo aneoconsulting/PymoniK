@@ -7,6 +7,8 @@
 
 A dead-simple Python SDK for [ArmoniK](https://github.com/aneoconsulting/ArmoniK).
 
+< [Documentation](https://pymonik.readthedocs.io/en/latest) | [Getting Started](https://pymonik.readthedocs.io/en/latest/getting-started.html) | [Contributing](https://pymonik.readthedocs.io/en/latest/development/contribution.html) >
+
 </div>
 
 ## Quick start
@@ -118,11 +120,3 @@ tests/                   pytest suite (unit + slow integration via LocalCluster)
   image's Python must match the client's).
 - An ArmoniK cluster — see the [ArmoniK getting-started guide](https://armonik.readthedocs.io/en/latest/content/armonik/getting-started.html).
 - For local-only tests: nothing else; `LocalCluster` runs in-process.
-
-## Documentation
-
-The full guide tree lives under `.docs/` (built with Sphinx + MyST).
-Topics: getting started, runtime pip dependencies, blobs and file
-materialization, multi-partition routing, retries, local testing,
-observability (OTel + Jaeger), async, sub-tasking and multi-output
-tasks, worker image building.

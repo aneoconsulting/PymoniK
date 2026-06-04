@@ -79,12 +79,11 @@ events stream over the network) need a live ArmoniK; mark those
 ## Type checking
 
 ```sh
-uv run basedpyright src/pymonik
+uv run ty check src/pymonik
 ```
 
-The codebase aims for `typeCheckingMode = "standard"`. New code
-should be fully annotated; private helpers may skip annotations when
-obvious.
+New code should be fully annotated; private helpers may skip
+annotations when obvious.
 
 A few upstream-typing quirks (anyio's `to_thread.run_sync` overload
 resolution, armonik's `Result` field types) produce false positives
