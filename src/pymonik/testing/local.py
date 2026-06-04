@@ -727,7 +727,9 @@ class LocalSession:
                         )
                     )
                     return
-            self._submit_tail(result, expected_output_ids=output_ids)
+            self._submit_tail(
+                result, expected_output_ids=output_ids
+            )
             return
 
         # ---- multi-output return ----
@@ -770,7 +772,9 @@ class LocalSession:
                     # only that output id; the field's Future is already
                     # registered under `oid`, so the tail dispatch
                     # resolves it when the child writes.
-                    self._submit_tail(value, expected_output_ids=[oid])
+                    self._submit_tail(
+                        value, expected_output_ids=[oid]
+                    )
                 elif isinstance(value, Future):
                     fut._resolve_error(
                         TaskFailed(

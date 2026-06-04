@@ -46,6 +46,13 @@ class TaskInfo:
     pod_hostname: Optional[str] = None
     error: Optional[str] = None
     status_message: Optional[str] = None
+    # Task id of the parent that spawned this one from inside a worker
+    # (subtask / delegation). ``None`` for client-submitted tasks.
+    created_by: Optional[str] = None
+    # The PymoniK ``@task`` function name, recovered from the
+    # ``pymonik.task_name`` option PymoniK stamps at submission. ``None``
+    # for tasks not submitted through PymoniK.
+    task_name: Optional[str] = None
 
     @classmethod
     def from_armonik(cls, t: "_ArmTask") -> "TaskInfo":
@@ -54,12 +61,14 @@ class TaskInfo:
         out = getattr(t, "output", None)
         if out is not None:
             err = getattr(out, "error", None) or None
+        opts = getattr(t, "options", None)
+        opt_map = getattr(opts, "options", None) or {}
         return cls(
             id=t.id,
             session_id=t.session_id,
             status=t.status,
-            partition_id=getattr(getattr(t, "options", None), "partition_id", None),
-            priority=getattr(getattr(t, "options", None), "priority", None),
+            partition_id=getattr(opts, "partition_id", None),
+            priority=getattr(opts, "priority", None),
             created_at=t.created_at,
             submitted_at=t.submitted_at,
             started_at=t.started_at,
@@ -71,6 +80,8 @@ class TaskInfo:
             pod_hostname=getattr(t, "pod_hostname", None),
             error=err,
             status_message=getattr(t, "status_message", None),
+            created_by=getattr(t, "created_by", None) or None,
+            task_name=opt_map.get("pymonik.task_name"),
         )
 
 

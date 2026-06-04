@@ -278,6 +278,11 @@ def submit_many(
         # 4. Per-task options uniform per batch — see comment in
         # _ClientBackend on why options= isn't on each TaskDefinition.
         per_task_options = merged_opts.to_armonik(default_partition=partition)
+        # Stamp the @task function name into the options map so the
+        # cluster carries it — recovered by ``TaskInfo.task_name`` for
+        # introspection / the Marimo session graph (the cluster Task
+        # model has no notion of the Python function name otherwise).
+        per_task_options.options["pymonik.task_name"] = task.name
 
         # 5. Submit.
         definitions = [

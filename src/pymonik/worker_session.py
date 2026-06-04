@@ -219,6 +219,9 @@ class WorkerSession:
         payload_id = result_map[payload_name].result_id
 
         per_task_options = merged_opts.to_armonik(default_partition="")
+        # Same name stamp as ``submit_many`` so delegated children carry
+        # their @task name to the cluster for introspection / the graph.
+        per_task_options.options["pymonik.task_name"] = task.name
 
         definition = TaskDefinition(
             payload_id=payload_id,
