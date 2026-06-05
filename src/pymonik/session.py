@@ -29,6 +29,7 @@ import hashlib
 
 import cloudpickle
 
+import pymonik.hooks as hooks
 from pymonik import blob as blob_mod
 from pymonik._internal import _otel
 from pymonik._internal.exec_cache import (
@@ -256,6 +257,14 @@ class Session:
                 completion="events" if self._use_events else "poll",
             )
 
+        if hooks.active():
+            hooks.emit(
+                hooks.SessionOpened,
+                session_id=self._session_id,
+                partitions=tuple(self._partitions),
+                attached=self._attach_to is not None,
+            )
+
         # Copy the current ContextVars (including OTel's active span) into
         # the runner thread so any RPC it makes — Events.GetEvents,
         # Tasks.list_results during polling, Results.DownloadResultData
@@ -305,6 +314,13 @@ class Session:
             _otel.end_long_span(self._otel_session_span, self._otel_session_token)
             self._otel_session_span = None
             self._otel_session_token = None
+
+        if self._session_id is not None and hooks.active():
+            hooks.emit(
+                hooks.SessionClosed,
+                session_id=self._session_id,
+                cancelled=self._cancelled,
+            )
 
     # ---- context manager (sync) ----
 

@@ -22,7 +22,7 @@ Quick start:
             print(total.result(timeout=60))
 """
 
-from pymonik import blob, testing
+from pymonik import blob, hooks, testing
 from pymonik._internal._logging import enable_logging, silence_logging
 from pymonik._internal.info import (
     PartitionInfo,
@@ -79,6 +79,7 @@ __all__ = [
     "Blob",
     "Materialize",
     "testing",
+    "hooks",
     "enable_logging",
     "silence_logging",
     # introspection

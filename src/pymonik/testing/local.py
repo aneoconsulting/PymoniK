@@ -49,6 +49,7 @@ import cloudpickle
 from pymonik._internal._logging import get_logger
 from armonik.common import TaskDefinition, TaskOptions
 
+import pymonik.hooks as hooks
 from pymonik import context as ctx_mod
 from pymonik import envelope as env_mod
 from pymonik._internal.exec_cache import ExecCache, default_cache_dir
@@ -275,6 +276,19 @@ class LocalSession:
 
     # ---- context manager (sync) ----
 
+    def _emit_opened(self) -> None:
+        if hooks.active():
+            hooks.emit(
+                hooks.SessionOpened,
+                session_id=self._session_id,
+                partitions=tuple(self._partitions),
+                attached=False,
+            )
+
+    def _emit_closed(self) -> None:
+        if hooks.active():
+            hooks.emit(hooks.SessionClosed, session_id=self._session_id, cancelled=False)
+
     def __enter__(self) -> "LocalSession":
         self._ctx_token = _current_session.set(self)
         from pymonik._internal import _otel as _otel_mod
@@ -289,6 +303,7 @@ class LocalSession:
             },
             kind="client",
         )
+        self._emit_opened()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -309,6 +324,7 @@ class LocalSession:
                 _otel_mod.end_long_span(self._otel_session_span, self._otel_session_token)
                 self._otel_session_span = None
                 self._otel_session_token = None
+            self._emit_closed()
 
     # ---- context manager (async) ----
 
@@ -326,6 +342,7 @@ class LocalSession:
             },
             kind="client",
         )
+        self._emit_opened()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -346,6 +363,7 @@ class LocalSession:
                 _otel_mod.end_long_span(self._otel_session_span, self._otel_session_token)
                 self._otel_session_span = None
                 self._otel_session_token = None
+            self._emit_closed()
 
     # ---- blob upload (in-memory, content-hash dedup like Session) ----
 

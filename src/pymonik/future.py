@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 import anyio
 import cloudpickle
 
+import pymonik.hooks as hooks
 from pymonik._internal import _otel
 from pymonik.errors import PymonikError, TaskFailed, TaskTimeout
 
@@ -120,6 +121,10 @@ class Future(Generic[T]):
             return
         self._done.set()
         self._wake_async()
+        # Normal success path (lazy): the lifecycle event fires here even
+        # though the bytes aren't downloaded yet — "completed" is a status
+        # fact, independent of whether anyone has materialised the value.
+        self._emit_lifecycle()
 
     def _resolve_ok(self, raw_bytes: bytes) -> None:
         """Resolve with bytes already in hand (cache hit / direct).
@@ -136,6 +141,31 @@ class Future(Generic[T]):
             self._error = TaskFailed(self._task_id, f"could not unpickle result: {e!r}")
         self._done.set()
         self._wake_async()
+        self._emit_lifecycle()
+
+    def _emit_lifecycle(self) -> None:
+        """Emit TaskCompleted / TaskFailed for a resolved future, if hooked."""
+        if not hooks.active():
+            return
+        sid = getattr(self._session, "session_id", None)
+        if sid is None:
+            return
+        if self._error is None:
+            hooks.emit(
+                hooks.TaskCompleted,
+                session_id=sid,
+                task_id=self._task_id,
+                result_id=self._result_id,
+            )
+        else:
+            hooks.emit(
+                hooks.TaskFailed,
+                session_id=sid,
+                task_id=self._task_id,
+                result_id=self._result_id,
+                error_type=type(self._error).__name__,
+                message=str(self._error),
+            )
 
     def _materialize(self) -> T:
         """Download (once) and unpickle this future's result bytes.
@@ -175,10 +205,30 @@ class Future(Generic[T]):
             if isinstance(err, on_types) and self._retry_attempt < max_retries:
                 self._retry_attempt += 1
                 self._session._schedule_retry(self, attempt=self._retry_attempt)
+                if hooks.active():
+                    sid = getattr(self._session, "session_id", None)
+                    if sid is not None:
+                        hooks.emit(
+                            hooks.TaskRetried,
+                            session_id=sid,
+                            task_id=self._task_id,
+                            attempt=self._retry_attempt,
+                        )
                 return
         self._error = err
         self._done.set()
         self._wake_async()
+        if hooks.active():
+            sid = getattr(self._session, "session_id", None)
+            if sid is not None:
+                hooks.emit(
+                    hooks.TaskFailed,
+                    session_id=sid,
+                    task_id=self._task_id,
+                    result_id=self._result_id,
+                    error_type=type(err).__name__,
+                    message=str(err),
+                )
 
     def _wake_async(self) -> None:
         """Called from the completion thread; wake any async awaiter."""

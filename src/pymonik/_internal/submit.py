@@ -34,6 +34,8 @@ import cloudpickle
 from pymonik._internal._logging import get_logger
 from armonik.common import TaskDefinition, TaskOptions
 
+import pymonik.hooks as hooks
+from pymonik import context as _ctx
 from pymonik import envelope as env_mod
 from pymonik._internal import _otel
 from pymonik._internal.refs import auto_spill, extract_deps
@@ -302,9 +304,19 @@ def submit_many(
             max_retries = task.opts.retries if task.opts.retries is not None else 3
             retry_policy = (max_retries, tuple(task.opts.retry_on), backoff_fn)
 
+        # When this submission runs from inside a @task body (a worker, or
+        # LocalCluster in-process), the worker context names the parent —
+        # that's the ``created_by`` subtask linkage. Read once, gated so
+        # the no-hooks path does nothing. ``None`` for client submissions.
+        emit_hooks = hooks.active()
+        created_by: str | None = None
+        if emit_hooks:
+            parent = _ctx._current.get()
+            created_by = parent.task_id if parent is not None else None
+
         futures: list[Any] = []
-        for (args, kwargs), task_id, output_ids in zip(
-            normalised, task_ids, output_groups
+        for (args, kwargs), task_id, output_ids, deps in zip(
+            normalised, task_ids, output_groups, task_deps
         ):
             if existing_future is not None:
                 fut = existing_future
@@ -321,6 +333,18 @@ def submit_many(
                     fut._retry_state = (task, args, kwargs, max_r, on_types, backoff_fn)
             if on_submitted is not None:
                 on_submitted(output_ids, fut)
+            if emit_hooks:
+                hooks.emit(
+                    hooks.TaskSubmitted,
+                    session_id=backend.session_id,
+                    task_id=task_id,
+                    task_name=task.name,
+                    result_ids=tuple(output_ids),
+                    data_dependencies=tuple(deps),
+                    partition=partition,
+                    attempt=attempt,
+                    created_by=created_by,
+                )
             futures.append(fut)
 
         if submit_span is not None and futures:
