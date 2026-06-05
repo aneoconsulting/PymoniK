@@ -51,7 +51,7 @@ from armonik.common import TaskDefinition, TaskOptions
 
 from pymonik import context as ctx_mod
 from pymonik import envelope as env_mod
-from pymonik._internal.exec_cache import ExecCache, compute_cache_key, default_cache_dir
+from pymonik._internal.exec_cache import ExecCache, default_cache_dir
 from pymonik._internal.refs import auto_spill, extract_deps, resolve_refs
 from pymonik._internal.submit import normalise_calls, submit_many
 from pymonik.context import WorkerContext
@@ -378,7 +378,7 @@ class LocalSession:
         calls: list[Any],
     ) -> FutureList[Any]:
         normalised = normalise_calls(calls)
-        cached_hits, miss_idxs, keys = self._cache_classify(task, normalised)
+        reused, miss_idxs, keys = self._cache_classify(task, normalised)
 
         miss_calls = [normalised[i] for i in miss_idxs]
         if miss_calls:
@@ -387,8 +387,8 @@ class LocalSession:
             miss_futures = FutureList([])
 
         out: list[Future[Any]] = [None] * len(normalised)  # type: ignore[list-item]
-        for i, raw in cached_hits.items():
-            out[i] = Future._new_cached(self, raw)
+        for i, (rid, key, owner) in reused.items():
+            out[i] = Future._new_reused(self, rid, key, owner)
         for j, idx in enumerate(miss_idxs):
             fut = miss_futures[j]
             if idx in keys:
@@ -400,41 +400,13 @@ class LocalSession:
         self,
         task: Task[Any, Any],
         normalised: list[tuple[tuple[Any, ...], dict[str, Any]]],
-    ) -> tuple[dict[int, bytes], list[int], dict[int, str]]:
-        if self._cache is None or task.opts.cache is not True:
-            return {}, list(range(len(normalised))), {}
-
-        import pymonik
-
-        fn_pickle_hash = hashlib.sha256(cloudpickle.dumps(task.func)).digest()
-        cached_hits: dict[int, bytes] = {}
-        miss_idxs: list[int] = []
-        keys: dict[int, str] = {}
-        for i, (args, kwargs) in enumerate(normalised):
-            key = compute_cache_key(
-                pymonik_version=pymonik.__version__,
-                task_name=task.name,
-                function_pickle_hash=fn_pickle_hash,
-                args=args,
-                kwargs=kwargs,
-            )
-            if key is None:
-                miss_idxs.append(i)
-                continue
-            try:
-                cached_hits[i] = self._cache.get_bytes(key)
-                log.info("cache hit (local)", task=task.name, key=key[:16])
-            except KeyError:
-                miss_idxs.append(i)
-                keys[i] = key
-        if cached_hits:
-            log.info(
-                "cache batch summary (local)",
-                task=task.name,
-                hits=len(cached_hits),
-                misses=len(miss_idxs),
-            )
-        return cached_hits, miss_idxs, keys
+    ) -> tuple[dict[int, tuple[str, str, str | None]], list[int], dict[int, str]]:
+        # Result reuse is a real-cluster feature:
+        # LocalCluster results live in process memory and don't survive a
+        # restart, so there's nothing durable to reuse across runs. The
+        # optional local-value cache covers cross-run reuse for
+        # LocalCluster. Here, everything is a miss.
+        return {}, list(range(len(normalised))), {}
 
     def _submit_through_pipeline(
         self,
@@ -593,6 +565,20 @@ class LocalSession:
             ev = self._result_events.get(output_id)
         if ev is not None:
             ev.set()
+
+    def _materialize_result(self, result_id: str) -> bytes:
+        """Return a completed result's bytes from the in-process store.
+
+        The local equivalent of ``Session._materialize_result`` — the
+        future calls this lazily on ``.result()``. Bytes were
+        stashed by ``_write_result_bytes`` when the task ran.
+        """
+        with self._lock:
+            if result_id in self._result_bytes:
+                return self._result_bytes[result_id]
+            if result_id in self._blob_bytes:
+                return self._blob_bytes[result_id]
+        raise TaskFailed(result_id, f"local result {result_id} unavailable")
 
     def _submit_tail(
         self,
@@ -798,7 +784,7 @@ class LocalSession:
                     self._write_result_bytes(oid, pickled)
                     field_fut = self._field_future_for(oid)
                     if field_fut is not None:
-                        field_fut._resolve_ok(pickled)
+                        field_fut._mark_completed()
             return
 
         # ---- plain single-output return ----
@@ -832,7 +818,7 @@ class LocalSession:
                 )
             except Exception as e:  # noqa: BLE001
                 log.warning("cache write failed", error=str(e))
-        fut._resolve_ok(pickled)
+        fut._mark_completed()
 
     def _field_future_for(self, output_id: str) -> "Future[Any] | None":
         """Look up the per-field Future registered for this output id."""
@@ -933,7 +919,7 @@ class LocalSession:
                         self._cache.put_bytes(fut._cache_key, pickled)
                     except Exception as e:  # noqa: BLE001
                         log.warning("cache write failed", error=str(e))
-                fut._resolve_ok(pickled)
+                fut._mark_completed()
                 return
 
             if envelope.env_spec is not None:

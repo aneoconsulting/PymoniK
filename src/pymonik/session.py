@@ -31,7 +31,12 @@ import cloudpickle
 
 from pymonik import blob as blob_mod
 from pymonik._internal import _otel
-from pymonik._internal.exec_cache import ExecCache, compute_cache_key
+from pymonik._internal.exec_cache import (
+    ExecCache,
+    ResultIndex,
+    compute_cache_key,
+    fn_identity,
+)
 from pymonik._internal.query import (
     ResultQuery,
     TaskQuery,
@@ -100,6 +105,11 @@ class Session:
         self._polling_chunk = polling_chunk
         self._spill_threshold = spill_threshold
         self._cache = cache
+        # Reuse index (key → existing result_id), colocated with the
+        # value cache root. Present whenever caching infra is enabled.
+        self._index: ResultIndex | None = (
+            ResultIndex(cache.root) if cache is not None else None
+        )
         # Existing session id we're attaching to. None = create a fresh
         # session on open. When attached, ``__exit__`` doesn't issue
         # ``close_session()`` — other consumers may still be using the
@@ -567,7 +577,7 @@ class Session:
         normalised = normalise_calls(calls)
 
         # Cache filter pass.
-        cached_hits, miss_idxs, keys = self._cache_classify(task, normalised)
+        reused, miss_idxs, keys = self._cache_classify(task, normalised)
 
         # Submit only the misses.
         miss_calls = [normalised[i] for i in miss_idxs]
@@ -576,29 +586,17 @@ class Session:
         else:
             miss_futures = FutureList([])
 
-        # Stitch back to original order; tag misses with their cache key.
+        # Stitch back to original order; tag misses with their cache key
+        # so a successful result is recorded in the index (and optionally
+        # the local-value cache) when it lands.
         out: list[Future[Any]] = [None] * len(normalised)  # type: ignore[list-item]
-        for i, raw in cached_hits.items():
-            out[i] = Future._new_cached(self, raw)
+        for i, (rid, key, owner) in reused.items():
+            out[i] = Future._new_reused(self, rid, key, owner)
         for j, idx in enumerate(miss_idxs):
             fut = miss_futures[j]
             if idx in keys:
                 fut._cache_key = keys[idx]
             out[idx] = fut
-
-        # If any calls were uncacheable but task was cache-eligible, log once.
-        if self._cache is not None and task.opts.cache is True:
-            n_skip = sum(
-                1
-                for i in range(len(normalised))
-                if i not in cached_hits and i not in keys
-            )
-            if n_skip:
-                log.debug(
-                    "cache skipped (uncacheable args)",
-                    task=task.name,
-                    skipped=n_skip,
-                )
 
         return FutureList(out)
 
@@ -606,54 +604,97 @@ class Session:
         self,
         task: Task[Any, Any],
         normalised: list[tuple[tuple[Any, ...], dict[str, Any]]],
-    ) -> tuple[dict[int, bytes], list[int], dict[int, str]]:
-        """Decide hit / miss / uncacheable for each call.
+    ) -> tuple[dict[int, tuple[str, str, str | None]], list[int], dict[int, str]]:
+        """Decide reuse / miss / uncacheable for each call.
 
-        Returns ``(cached_hits, miss_idxs, keys)`` where:
-        - ``cached_hits``: ``{idx: cloudpickled_bytes}`` for entries
-          that already exist on disk.
-        - ``miss_idxs``: indices that need to go through submission
-          (a superset of ``keys`` keys).
-        - ``keys``: ``{idx: cache_key}`` for misses we want to write
-          back to the cache when their result arrives. Indices with no
-          entry are uncacheable (Future args, unpicklable values).
+        Returns ``(reused, miss_idxs, keys)``:
+        - ``reused``: ``{idx: (result_id, cache_key)}`` — an existing
+          cluster result, validated COMPLETED, to bind a future to (no
+          resubmission).
+        - ``miss_idxs``: indices that go through submission.
+        - ``keys``: ``{idx: cache_key}`` for cacheable misses — recorded
+          in the index when their result completes. Indices absent from
+          ``reused`` and ``keys`` are uncacheable.
         """
-        if self._cache is None or task.opts.cache is not True:
+        eff = self._default_opts.merge(task.opts)
+        if self._cache is None or self._index is None or eff.cache is not True:
             return {}, list(range(len(normalised))), {}
 
         import pymonik
 
-        fn_pickle_hash = hashlib.sha256(cloudpickle.dumps(task.func)).digest()
-        cached_hits: dict[int, bytes] = {}
-        miss_idxs: list[int] = []
+        fn_id = fn_identity(task.func, cache_version=eff.cache_version)
         keys: dict[int, str] = {}
+        # candidate result_id per cacheable call that has an index entry
+        candidates: dict[int, str] = {}
+        miss_idxs: list[int] = []
 
         for i, (args, kwargs) in enumerate(normalised):
             key = compute_cache_key(
                 pymonik_version=pymonik.__version__,
                 task_name=task.name,
-                function_pickle_hash=fn_pickle_hash,
+                fn_id=fn_id,
                 args=args,
                 kwargs=kwargs,
             )
             if key is None:
-                miss_idxs.append(i)
+                miss_idxs.append(i)  # uncacheable
                 continue
-            try:
-                raw = self._cache.get_bytes(key)
-                cached_hits[i] = raw
-                log.info("cache hit", task=task.name, key=key[:16])
-            except KeyError:
-                miss_idxs.append(i)
-                keys[i] = key
-        if cached_hits:
+            keys[i] = key
+            entry = self._index.get(key)
+            if entry is not None:
+                candidates[i] = entry["result_id"]
+
+        # Validate candidates against the cluster in one batch — only
+        # reuse results that still exist and COMPLETED. Stale/evicted →
+        # fall through to a normal submit (no retention guarantees).
+        # ``valid`` maps result_id → owner_task_id (the producing task).
+        valid = self._validate_results(set(candidates.values()))
+        reused: dict[int, tuple[str, str, str | None]] = {}
+        for i in range(len(normalised)):
+            if i in candidates and candidates[i] in valid:
+                rid = candidates[i]
+                reused[i] = (rid, keys[i], valid[rid])
+            elif i in keys:
+                miss_idxs.append(i)  # cacheable miss (key recorded on success)
+            # else: already in miss_idxs (uncacheable)
+
+        miss_idxs.sort()
+        if reused:
             log.info(
-                "cache batch summary",
+                "result reuse",
                 task=task.name,
-                hits=len(cached_hits),
+                reused=len(reused),
                 misses=len(miss_idxs),
             )
-        return cached_hits, miss_idxs, keys
+        return reused, miss_idxs, keys
+
+    def _validate_results(self, result_ids: set[str]) -> dict[str, str | None]:
+        """Map each still-existing, COMPLETED ``result_id`` to its
+        ``owner_task_id`` (the task that produced it). Results that are
+        missing or not COMPLETED are absent from the returned map and so
+        won't be reused."""
+        if not result_ids or self._results is None:
+            return {}
+        from armonik.client import ResultFieldFilter
+        from armonik.common import ResultStatus
+
+        ids = list(result_ids)
+        filt = None
+        for rid in ids:
+            cond = ResultFieldFilter.RESULT_ID == rid
+            filt = cond if filt is None else (filt | cond)
+        valid: dict[str, str | None] = {}
+        try:
+            _total, items = self._results.list_results(
+                result_filter=filt, page=0, page_size=len(ids)
+            )
+            for r in items:
+                if r.status == ResultStatus.COMPLETED:
+                    valid[r.result_id] = getattr(r, "owner_task_id", None) or None
+        except Exception as e:  # noqa: BLE001 — a validation failure → no reuse
+            log.debug("result validation failed; treating as miss", error=str(e))
+            return {}
+        return valid
 
     def _submit_through_pipeline(
         self,
@@ -786,7 +827,6 @@ class Session:
     def _resolve_result(self, result_id: str, *, ok: bool) -> None:
         assert self._results is not None
         assert self._tasks is not None
-        session_id = self.session_id
 
         with self._lock:
             fut = self._pending.pop(result_id, None)
@@ -809,33 +849,33 @@ class Session:
             fut._resolve_error(TaskFailed(fut.task_id, msg))
             return
 
-        try:
-            data = self._results.download_result_data(
-                result_id=result_id,
-                session_id=session_id,
-            )
-        except Exception as e:
-            fut._resolve_error(TaskFailed(fut.task_id, f"download failed: {e!r}"))
-            return
-
-        # Cache write FIRST so that by the time fut._resolve_ok wakes
-        # the user's .result() / await, the entry is already on disk.
-        # Otherwise an immediate re-spawn could race the events-thread
-        # writer and miss the cache it should have hit. Failure path is
-        # never cached.
-        if self._cache is not None and fut._cache_key is not None:
+        # Record the reuse mapping (structural key → this result_id) so a
+        # later run can reuse it instead of resubmitting. Done at
+        # completion (success only), so the index never points at a
+        # failed result.
+        if self._index is not None and fut._cache_key is not None:
             try:
-                self._cache.put_bytes(fut._cache_key, data)
-                log.info(
-                    "cache stored",
-                    task_id=fut.task_id,
-                    key=fut._cache_key[:16],
-                    bytes=len(data),
-                )
-            except Exception as e:  # noqa: BLE001 — never block a happy path
-                log.warning("cache write failed", error=str(e))
+                self._index.put(fut._cache_key, result_id, self.session_id)
+            except Exception as e:  # noqa: BLE001 — never block the happy path
+                log.debug("index write failed", error=str(e))
 
-        fut._resolve_ok(data)
+        # Mark COMPLETED only — no download here (ADR-0013). The bytes
+        # are fetched lazily by the future's .result()/await via
+        # ``_materialize_result``, so intermediate pipeline results the
+        # client never reads are never pulled to the client.
+        fut._mark_completed()
+
+    def _materialize_result(self, result_id: str) -> bytes:
+        """Download a result's bytes on demand (called by ``Future``).
+
+        Runs while the session/channel is open — the future blocks the
+        caller until the bytes arrive.
+        """
+        assert self._results is not None
+        return self._results.download_result_data(
+            result_id=result_id,
+            session_id=self.session_id,
+        )
 
 
 class _ClientBackend:

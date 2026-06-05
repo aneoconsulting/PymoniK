@@ -105,6 +105,16 @@ class TaskOpts:
     # opts that task in). True = cache this task; False = don't (overrides
     # any ambient default).
     cache: Optional[bool] = None
+    # Cache identity override. When set, the structural cache
+    # key uses this string as the function's identity instead of hashing
+    # its source — bump it to force a recompute when the function's
+    # *behaviour* changed in a way the source hash can't see (e.g. a
+    # helper it calls changed). None = derive identity from source.
+    cache_version: Optional[str] = None
+    # Optional local-value cache. When True, a terminal
+    # value materialised via ``.result()`` is also persisted to local
+    # disk so a later run returns it with zero cluster contact.
+    cache_locally: Optional[bool] = None
     # Runtime pip dependencies. List of PEP-508 specifiers (e.g.
     # ``("numpy>=2", "polars")``). Hashed into an env_id; the worker
     # builds (or reuses) a venv per env_id and runs the task against it.

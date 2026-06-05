@@ -1,59 +1,38 @@
-"""On-disk execution cache.
+"""Result-reuse cache.
 
-Opt-in via ``PymonikClient(cache=...)`` (enables the cache *infrastructure*)
-plus ``@task(cache=True)`` (opts a specific task in). When both are set,
-``Task.spawn(...)`` / ``Task.map(...)`` compute a content hash of the
-``(function, args, kwargs)`` triple and consult the cache *before*
-submitting. A hit returns a ``Future`` that's already resolved with the
-cached value — zero RPCs, zero workers scheduled. A miss submits as
-normal and writes the result back when it lands.
+Two pieces live here:
 
-Layout
-------
-
-::
-
-    <root>/
-        ab/
-            ab12cd34…ef.pkl     # cloudpickled task return value
-        cd/
-            ...
-
-Two-char prefix avoids one giant directory; key is the SHA-256 hex of
-the canonicalised hash inputs.
-
-What's safe to cache
---------------------
-
-The user is responsible for declaring a task pure (``@task(cache=True)``).
-Caching skips automatically when an arg can't be hashed deterministically:
-
-- ``Future`` and ``FutureList`` args → upstream value not yet known; we
-  can't compute a stable key without waiting.
-- Anything cloudpickle can't dump.
-
-Blob and Materialize args contribute their content hash (stable across
-sessions and machines), so they participate in cache keys without
-forcing the whole call to be a miss.
-
-The key prefix includes ``pymonik.__version__`` and ``python_minor`` so
-upgrading either invalidates entries cleanly.
+- **Structural cache keys.** A task call's key is content-addressed
+  over the *graph identity*, computed at submit time:
+  ``H(version, python, fn_identity, [arg descriptors])``. A ``Future``
+  argument contributes the **upstream task's key** (carried on the
+  future), not its not-yet-known value — so intermediate tasks are
+  cacheable and an unchanged DAG prefix produces stable keys even when a
+  downstream task changes. (Same content-addressing as Nix / Bazel /
+  Nextflow ``-resume``.)
+- **ResultIndex.** A client-side, disk-backed ``key → (result_id,
+  session_id)`` map. A hit is validated against the cluster
+  (result still ``COMPLETED``) before the existing ``result_id`` is
+  reused as a dependency / lazily downloaded — no resubmission. There is
+  no retention story: a stale entry just misses and we recompute.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import inspect
+import json
 import os
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import cloudpickle
-from pymonik._internal._logging import get_logger
 
-if TYPE_CHECKING:
-    pass
+from pymonik._internal._logging import get_logger
 
 log = get_logger(__name__)
 
@@ -69,49 +48,105 @@ def default_cache_dir() -> Path:
     return base / "pymonik"
 
 
-def _hash_arg(value: Any) -> bytes | None:
-    """Hash one arg-tree leaf. Returns ``None`` when the leaf makes the
-    call uncacheable (typically: contains a ``Future``).
-    """
-    # Local imports keep this module light at top-level.
-    from pymonik.blob import Blob, Materialize
-    from pymonik.future import Future, FutureList
+# ---------- function identity ----------
 
-    if isinstance(value, (Future, FutureList)):
-        return None  # upstream value not known yet — can't hash
+
+def fn_identity(func: Any, *, cache_version: str | None = None) -> bytes | None:
+    """A stable hash of *what the function computes*.
+
+    - ``cache_version`` (from ``@task(cache_version=...)``) wins — the
+      user declares identity explicitly; nothing else is inspected.
+    - Otherwise the normalised **source** of the function plus the hashes
+      of its closed-over free variables. Source-based (not cloudpickle
+      bytes) so it's stable across runs and reasonably portable.
+    - ``None`` (uncacheable) when neither source nor a deterministic
+      closure hash is available.
+
+    Caveat (the user's purity contract): this is a heuristic. It does not
+    see changes inside helper functions the task *calls*; use
+    ``cache_version`` to force a bust when that matters.
+    """
+    if cache_version is not None:
+        return b"ver:" + cache_version.encode()
+    try:
+        src = textwrap.dedent(inspect.getsource(func)).strip()
+    except (OSError, TypeError):
+        # No source (builtin / C / some REPLs). Fall back to cloudpickle
+        # bytes — less stable, but better than refusing to cache.
+        try:
+            return b"pk:" + hashlib.sha256(cloudpickle.dumps(func)).digest()
+        except Exception:
+            return None
+    h = hashlib.sha256(b"src:" + src.encode())
+    closure = getattr(func, "__closure__", None)
+    if closure:
+        for cell in closure:
+            try:
+                h.update(hashlib.sha256(cloudpickle.dumps(cell.cell_contents)).digest())
+            except Exception:
+                return None  # a closed-over value we can't hash → uncacheable
+    return h.digest()
+
+
+# ---------- argument descriptors ----------
+
+
+def arg_descriptor(value: Any) -> bytes | None:
+    """A stable byte descriptor for one argument leaf.
+
+    Returns ``None`` when the leaf makes the call uncacheable. A
+    ``Future``/``MultiResultHandle`` contributes the *upstream task's
+    cache key* (the Merkle link) rather than its value.
+    """
+    from pymonik.blob import Blob, Materialize
+    from pymonik.future import Future, FutureList, MultiResultHandle
+
+    if isinstance(value, Future):
+        # Upstream must itself be cacheable for us to be — otherwise we
+        # can't name the input deterministically.
+        return b"F:" + value._cache_key.encode() if value._cache_key else None
+    if isinstance(value, FutureList):
+        parts: list[bytes] = [b"FL"]
+        for f in value:
+            if not f._cache_key:
+                return None
+            parts.append(f._cache_key.encode())
+        return b":".join(parts)
+    if isinstance(value, MultiResultHandle):
+        # A handle as a whole isn't a single dependency; callers pass a
+        # field future (handle.field), which is a Future. Reject the bare
+        # handle as uncacheable.
+        return None
     if isinstance(value, Blob):
-        # blob.result_id is content-addressed locally (``local-blob-<sha>``)
-        # or stable per-session on the cluster — both are safe inputs.
         return f"B:{value.encoding}:{value.result_id}".encode()
     if isinstance(value, Materialize):
         return f"M:{value.result_id}:{value.worker_path}".encode()
     if isinstance(value, list):
-        parts: list[bytes] = [b"L"]
+        parts = [b"L"]
         for v in value:
-            h = _hash_arg(v)
-            if h is None:
+            d = arg_descriptor(v)
+            if d is None:
                 return None
-            parts.append(h)
+            parts.append(d)
         return b":".join(parts)
     if isinstance(value, tuple):
         parts = [b"T"]
         for v in value:
-            h = _hash_arg(v)
-            if h is None:
+            d = arg_descriptor(v)
+            if d is None:
                 return None
-            parts.append(h)
+            parts.append(d)
         return b":".join(parts)
     if isinstance(value, dict):
         parts = [b"D"]
         for k in sorted(value.keys(), key=lambda k: repr(k)):
-            sub = _hash_arg(value[k])
+            sub = arg_descriptor(value[k])
             if sub is None:
                 return None
             parts.append(repr(k).encode())
             parts.append(sub)
         return b":".join(parts)
-    # Leaf — cloudpickle hash. Cloudpickle is deterministic for plain
-    # data; for closures the bytes capture the identity.
+    # Plain leaf — cloudpickle hash (deterministic for plain data).
     try:
         return b"P" + hashlib.sha256(cloudpickle.dumps(value)).digest()
     except Exception:
@@ -122,40 +157,88 @@ def compute_cache_key(
     *,
     pymonik_version: str,
     task_name: str,
-    function_pickle_hash: bytes,
+    fn_id: bytes | None,
     args: tuple[Any, ...],
     kwargs: dict[str, Any],
 ) -> str | None:
-    """Stable hash for ``(version, python, task, function, args, kwargs)``.
-
-    Returns ``None`` when any arg makes the call uncacheable.
-    """
+    """Structural key for a single task call, or ``None`` if uncacheable."""
+    if fn_id is None:
+        return None
     parts: list[bytes] = [
         b"v=" + pymonik_version.encode(),
         b"py=" + python_minor().encode(),
         b"task=" + task_name.encode(),
-        b"fn=" + function_pickle_hash,
+        b"fn=" + fn_id,
     ]
     for a in args:
-        h = _hash_arg(a)
-        if h is None:
+        d = arg_descriptor(a)
+        if d is None:
             return None
-        parts.append(b"a=" + h)
+        parts.append(b"a=" + d)
     for k in sorted(kwargs.keys()):
-        sub = _hash_arg(kwargs[k])
+        sub = arg_descriptor(kwargs[k])
         if sub is None:
             return None
         parts.append(f"k:{k}=".encode() + sub)
     return hashlib.sha256(b"||".join(parts)).hexdigest()
 
 
-class ExecCache:
-    """Disk-backed result cache.
+# ---------- result index (key -> result_id) ----------
 
-    Atomic writes via tempfile + rename — a crashed write leaves no
-    half-file in the cache. Reads that fail to unpickle (post-upgrade
-    incompatibility, partial old entry, etc.) are treated as misses
-    and the bad file is removed.
+
+class ResultIndex:
+    """Disk-backed ``key → {result_id, session_id}`` map.
+
+    One small JSON file per key under ``<root>/index/<ab>/<key>.json``.
+    Atomic writes (tempfile + rename). A missing/garbage entry is a miss.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = root / "index"
+
+    def _path(self, key: str) -> Path:
+        return self._root / key[:2] / f"{key}.json"
+
+    def get(self, key: str) -> dict[str, str] | None:
+        p = self._path(key)
+        if not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict) or "result_id" not in data:
+            return None
+        return data
+
+    def put(self, key: str, result_id: str, session_id: str) -> None:
+        p = self._path(key)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps({"result_id": result_id, "session_id": session_id})
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(payload)
+            os.replace(tmp, p)
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
+
+    def forget(self, key: str) -> None:
+        with contextlib.suppress(OSError):
+            self._path(key).unlink()
+
+
+# ---------- value store (Layer 3: optional local value cache) ----------
+
+
+class ExecCache:
+    """Disk-backed *value* store for the optional local-value cache.
+
+    Stores cloudpickled result bytes the user already downloaded via
+    ``.result()``, keyed by the structural cache key. Atomic
+    writes; unreadable entries are dropped and treated as misses.
     """
 
     def __init__(self, root: Path) -> None:
@@ -167,10 +250,9 @@ class ExecCache:
         return self._root
 
     def _path(self, key: str) -> Path:
-        return self._root / key[:2] / f"{key}.pkl"
+        return self._root / "values" / key[:2] / f"{key}.pkl"
 
     def get_bytes(self, key: str) -> bytes:
-        """Return the cloudpickled bytes for ``key`` or raise ``KeyError``."""
         p = self._path(key)
         if not p.exists():
             raise KeyError(key)
@@ -179,73 +261,15 @@ class ExecCache:
         except OSError as e:
             raise KeyError(key) from e
 
-    def get(self, key: str) -> Any:
-        """Decoded equivalent of :meth:`get_bytes`."""
-        raw = self.get_bytes(key)
-        try:
-            return cloudpickle.loads(raw)
-        except Exception as e:
-            # Post-upgrade-style incompatibility — drop and miss.
-            try:
-                self._path(key).unlink()
-            except OSError:
-                pass
-            log.warning(
-                "cache entry unreadable; dropped",
-                key=key[:16],
-                error=str(e),
-            )
-            raise KeyError(key) from e
-
     def put_bytes(self, key: str, data: bytes) -> None:
-        """Atomic write of ``data`` (already cloudpickled) at ``key``."""
         p = self._path(key)
         p.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmpname = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".pkl")
+        fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=".tmp-", suffix=".pkl")
         try:
             with os.fdopen(fd, "wb") as f:
                 f.write(data)
-            os.replace(tmpname, p)
+            os.replace(tmp, p)
         except Exception:
-            try:
-                os.unlink(tmpname)
-            except OSError:
-                pass
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
             raise
-
-    def clear(self) -> int:
-        """Delete every entry. Returns the number of files removed."""
-        count = 0
-        if not self._root.exists():
-            return 0
-        for sub in self._root.iterdir():
-            if sub.is_dir():
-                for f in sub.iterdir():
-                    if f.suffix == ".pkl":
-                        try:
-                            f.unlink()
-                            count += 1
-                        except OSError:
-                            pass
-                try:
-                    sub.rmdir()
-                except OSError:
-                    pass
-        return count
-
-    def stats(self) -> dict[str, int]:
-        """Return ``{"entries": N, "bytes": M}`` for the current cache."""
-        entries = 0
-        total = 0
-        if not self._root.exists():
-            return {"entries": 0, "bytes": 0}
-        for sub in self._root.iterdir():
-            if sub.is_dir():
-                for f in sub.iterdir():
-                    if f.suffix == ".pkl":
-                        try:
-                            total += f.stat().st_size
-                            entries += 1
-                        except OSError:
-                            pass
-        return {"entries": entries, "bytes": total}

@@ -18,11 +18,11 @@ import asyncio
 import threading
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+import anyio
 import cloudpickle
 
 from pymonik._internal import _otel
 from pymonik.errors import PymonikError, TaskFailed, TaskTimeout
-
 
 _WORKER_STUB_BLOCK_MSG = (
     "cannot .result() / await a Future from inside a @task — ArmoniK tasks "
@@ -73,6 +73,8 @@ class Future(Generic[T]):
         # session's resolver writes the cloudpickled result to the
         # ExecCache under this key on success.
         "_cache_key",
+        "_materialized",
+        "_materialize_lock",
     )
 
     def __init__(self, session: "Session", task_id: str, result_id: str) -> None:
@@ -90,6 +92,8 @@ class Future(Generic[T]):
         self._retry_state: Any = None
         self._retry_attempt: int = 0
         self._cache_key: str | None = None
+        self._materialized: bool = False
+        self._materialize_lock = threading.Lock()
 
     @property
     def task_id(self) -> str:
@@ -104,15 +108,61 @@ class Future(Generic[T]):
         return self._done.is_set()
 
     # ---- internal: resolved by the session completion loop (thread) ----
+    def _mark_completed(self) -> None:
+        """Mark the task COMPLETED without downloading its bytes.
+
+        This is what the completion loop calls on success: it records
+        that the result is ready and wakes any waiter, but does **not**
+        fetch the data. The bytes are downloaded lazily by
+        :meth:`_materialize` on the first ``.result()`` / ``await``
+        """
+        if self._done.is_set():
+            return
+        self._done.set()
+        self._wake_async()
+
     def _resolve_ok(self, raw_bytes: bytes) -> None:
+        """Resolve with bytes already in hand (cache hit / direct).
+
+        Eagerly materialises — used when the value is local already and
+        there's nothing to download (e.g. the local-value cache).
+        """
         if self._done.is_set():
             return
         try:
             self._outcome = cloudpickle.loads(raw_bytes)
+            self._materialized = True
         except Exception as e:
             self._error = TaskFailed(self._task_id, f"could not unpickle result: {e!r}")
         self._done.set()
         self._wake_async()
+
+    def _materialize(self) -> T:
+        """Download (once) and unpickle this future's result bytes.
+
+        Called from ``.result()`` / ``await`` after the task is known
+        COMPLETED. Idempotent and thread-safe — concurrent waiters share
+        one download. Raises the unpickle failure as ``TaskFailed``.
+        """
+        if self._materialized:
+            if self._error is not None:
+                raise self._error
+            return self._outcome  # type: ignore[no-any-return]
+        with self._materialize_lock:
+            if not self._materialized:
+                try:
+                    raw = self._session._materialize_result(self._result_id)
+                    self._outcome = cloudpickle.loads(raw)
+                except PymonikError as e:
+                    self._error = e
+                except Exception as e:
+                    self._error = TaskFailed(
+                        self._task_id, f"could not fetch/unpickle result: {e!r}"
+                    )
+                self._materialized = True
+        if self._error is not None:
+            raise self._error
+        return self._outcome  # type: ignore[no-any-return]
 
     def _resolve_error(self, err: PymonikError) -> None:
         if self._done.is_set():
@@ -156,7 +206,7 @@ class Future(Generic[T]):
                 raise TaskTimeout(self._task_id)
             if self._error is not None:
                 raise self._error
-            return self._outcome  # type: ignore[no-any-return]
+            return self._materialize()
 
     # ---- public sync wait (no value, no error raise) ----
     def wait(self, timeout: float | None = None) -> "Future[T]":
@@ -205,7 +255,9 @@ class Future(Generic[T]):
 
         if self._error is not None:
             raise self._error
-        return self._outcome  # type: ignore[no-any-return]
+        # Download + unpickle off the event loop — materialisation is
+        # blocking I/O and must not stall the loop.
+        return await anyio.to_thread.run_sync(self._materialize)
 
     async def wait_async(self, timeout: float | None = None) -> "Future[T]":
         """Async sibling of :meth:`wait`. Block until resolved; return self.
@@ -228,6 +280,47 @@ class Future(Generic[T]):
         except asyncio.TimeoutError:
             raise TaskTimeout(self._task_id) from None
         return self
+
+    # ---- internal construction ----
+    @classmethod
+    def _new_reused(
+        cls,
+        session: Any,
+        result_id: str,
+        cache_key: str,
+        owner_task_id: str | None = None,
+    ) -> "Future[Any]":
+        """Build a future bound to an existing cluster ``result_id``.
+
+        Used on a cache hit: the task isn't resubmitted. The future is
+        already COMPLETED and carries the real ``result_id``, so it wires
+        as a genuine ``data_dependency`` downstream (no re-run) and
+        downloads lazily if read directly. ``cache_key`` is kept so this
+        result's identity propagates into downstream structural keys.
+
+        ``owner_task_id`` is the task that originally produced the
+        result (recovered from result metadata at validation). The
+        future's ``task_id`` becomes ``reused-<owner_task_id>`` so logs,
+        reprs and any download error name the real source rather than an
+        opaque sentinel.
+        """
+        fut: Future[Any] = cls.__new__(cls)
+        fut._session = session
+        fut._task_id = f"reused-{owner_task_id}" if owner_task_id else "reused"
+        fut._result_id = result_id
+        fut._done = threading.Event()
+        fut._aio_done = None
+        fut._aio_loop = None
+        fut._outcome = None
+        fut._error = None
+        fut._is_worker_stub = False
+        fut._retry_state = None
+        fut._retry_attempt = 0
+        fut._cache_key = cache_key
+        fut._materialized = False
+        fut._materialize_lock = threading.Lock()
+        fut._done.set()
+        return fut
 
     # ---- internal construction (cache hit) ----
     @classmethod
@@ -254,6 +347,8 @@ class Future(Generic[T]):
         fut._retry_state = None
         fut._retry_attempt = 0
         fut._cache_key = None
+        fut._materialized = False
+        fut._materialize_lock = threading.Lock()
         fut._resolve_ok(cached_bytes)
         return fut
 
@@ -284,6 +379,8 @@ class Future(Generic[T]):
         fut._retry_state = None
         fut._retry_attempt = 0
         fut._cache_key = None
+        fut._materialized = False
+        fut._materialize_lock = threading.Lock()
         return fut
 
     # ---- cancellation (client side) ----

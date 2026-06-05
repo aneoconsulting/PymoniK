@@ -35,7 +35,7 @@ results = add.map(range(32), range(1, 33))
 `map` zips its iterables (Python-stdlib semantics) and packs all 32
 submissions into a single gRPC call. Returns a `FutureList[int]`.
 
-**Pipelines compose by passing futures as arguments.**
+**DAGs compose by passing futures as arguments.**
 
 ```python
 @task
