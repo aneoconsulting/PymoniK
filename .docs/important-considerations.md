@@ -133,16 +133,28 @@ def parent() -> int:
 ArmoniK tasks are ephemeral; blocking inside one ties up a pod
 indefinitely. Pass the future to another `.spawn()` (creates a data
 dependency edge so ArmoniK runs the next task once this one
-completes), or return it with `_delegate=True` to hand off your
-expected output. See [Sub-tasking in Getting Started](getting-started.md#sub-tasking).
+completes), or hand your output to a child with
+`return other.tail(...)`. See [Sub-tasking in Getting Started](getting-started.md#sub-tasking).
 
 ## Returning multiple results
 
-A task returns one Python object. If you `return a, b, c`, the worker
-pickles the tuple and downstream tasks receive the tuple. There's no
-way today to declare "this task produces three independent outputs."
-If you need that, return a dict and have downstream tasks pick keys,
-or split into three tasks.
+A plain task returns one Python object: `return a, b, c` pickles the
+tuple, and a downstream consumer waits on the whole thing.
+
+When you want N *independent* outputs — so a consumer of one doesn't
+wait on the others — return a `MultiResult`:
+
+```python
+from pymonik import MultiResult, task
+
+@task
+def split(x: int):
+    return MultiResult(double=x * 2, triple=x * 3)
+```
+
+Each field becomes its own ArmoniK output id, so a task that depends
+on `out.double` runs without waiting for `triple`. See
+[Sub-tasking and multi-output](guides/sub-tasking-and-multi-output.md).
 
 ## Cancellation propagation
 

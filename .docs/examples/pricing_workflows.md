@@ -288,9 +288,6 @@ stream as they resolve.
   CPU partition; Monte Carlo on a GPU partition:
   `client.session(partition=["cpu", "gpu"])` plus
   `mc_path.with_options(partition="gpu")`.
-- **Trace it.** Pricing pipelines are exactly the workload OTel was
-  designed for: a deep DAG with fan-in steps that depend on thousands of
-  upstreams. See [Observability](../guides/observability.md).
 - **Cache for what-if iterations.** Re-running identical pricing is
   wasteful. `PymonikClient(cache=True)` and `@task(cache=True)`
   short-circuit identical re-submissions.
@@ -306,4 +303,5 @@ stream as they resolve.
 - **User simplicity** — from the client, both scenarios are
   `some_pricer.spawn(...).result()`. The difference is how much
   orchestration lives inside the tasks.
+
 ```

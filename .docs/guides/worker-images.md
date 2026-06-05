@@ -34,7 +34,7 @@ pymonik = {
   worker = [
     {
       image = "dockerhubaneo/harmonic_snake"
-      tag   = "python-3.11-2.0.0a3"   # MATCH your client's Python + pymonik version
+      tag   = "python-3.11-<pymonik-version>"   # MATCH your client's Python + pymonik version
       limits   = { cpu = "1000m", memory = "1024Mi" }
       requests = { cpu = "50m",   memory = "50Mi"   }
     }

@@ -112,8 +112,7 @@ LocalCluster(cache=True)                 # exec cache enabled
 # OTEL_EXPORTER_OTLP_ENDPOINT=... exports spans normally
 ```
 
-See [Observability](observability.md) and the exec-cache section in
-[Important considerations](../important-considerations.md).
+See [Observability](observability.md).
 
 ## When LocalCluster isn't enough
 

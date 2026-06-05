@@ -30,7 +30,7 @@ src/pymonik/                 # the package
   errors.py                  #   PymonikError hierarchy
   composition.py             #   gather, as_completed
   testing/                   #   LocalCluster
-  cli/                       #   pymonik CLI (stub today)
+  cli/                       #   pymonik CLI (click)
   _internal/                 #   not part of the public API
     submit.py                #     shared submission pipeline
     refs.py                  #     FutureRef / BlobRef / MaterializeRef
@@ -64,7 +64,7 @@ uv run pytest tests/test_otel.py -v   # one file
 
 The test suite is divided:
 
-- **Fast tests** (~30) — pure unit tests, no network, no `uv venv`
+- **Fast tests** (~110) — pure unit tests, no network, no `uv venv`
   builds. Run in seconds. These are what CI runs on every push.
 - **Slow tests** marked `@pytest.mark.slow` — exercise the runtime
   deps path with a real `uv` install. Need `uv` on `PATH`. Skip on
@@ -85,11 +85,12 @@ uv run ty check src/pymonik
 New code should be fully annotated; private helpers may skip
 annotations when obvious.
 
-A few upstream-typing quirks (anyio's `to_thread.run_sync` overload
-resolution, armonik's `Result` field types) produce false positives
-in `Session` / `WorkerSession` / `task.py`. These predate the
-revamp and aren't from new changes — leave them be unless you're
-fixing them upstream.
+`ty` currently reports a number of diagnostics, most of them from
+upstream typing (anyio's threading helpers, the `armonik` client's
+signatures) rather than PymoniK bugs. Typing here is gradual — start
+permissive and ratchet up as modules stabilise; tighten rule
+severities under `[tool.ty.rules]` in `pyproject.toml` when you want
+to enforce more.
 
 ## Linting and formatting
 
