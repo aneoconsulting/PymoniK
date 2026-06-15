@@ -74,6 +74,11 @@ class TaskSubmitted(PymonikEvent):
     task_id: str
     task_name: str
     result_ids: tuple[str, ...] = ()
+    # For a multi-output task, the field names in the SAME order as
+    # ``result_ids`` (so result_ids[i] is the output of field multi_fields[i]).
+    # Empty for single-output tasks. Lets a consumer label which field of a
+    # MultiResult a downstream task depends on.
+    multi_fields: tuple[str, ...] = ()
     data_dependencies: tuple[str, ...] = ()
     partition: str | None = None
     attempt: int = 1

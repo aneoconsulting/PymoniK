@@ -340,6 +340,7 @@ def submit_many(
                     task_id=task_id,
                     task_name=task.name,
                     result_ids=tuple(output_ids),
+                    multi_fields=tuple(task.multi_fields or ()),
                     data_dependencies=tuple(deps),
                     partition=partition,
                     attempt=attempt,
