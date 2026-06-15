@@ -46,7 +46,6 @@ mcp = ["mcp"]
 
 [project.scripts]
 pymonik-worker = "pymonik.worker:run"
-pymonik = "pymonik.cli.main:cli"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pymonik"]
