@@ -156,7 +156,17 @@ def resolve_refs(value: Any, data_dependencies: dict[str, bytes]) -> Any:
     if isinstance(value, BlobRef):
         raw = data_dependencies[value.result_id]
         if value.encoding == ENC_PICKLE:
-            return cloudpickle.loads(raw)
+            # Auto-spill pickles a whole top-level container — including any
+            # nested Future/Blob/Materialize sentinels extract_deps already
+            # rewrote — into this single blob. Re-walk the unpickled value so
+            # those inner refs resolve too; their bytes are present because
+            # extract_deps appended their ids to the task's data_dependencies
+            # before the spill pass ran. Without this recursion, a nested ref
+            # inside a spilled container reaches the task as a raw sentinel
+            # (silent wrong result). A concrete (non-container) spill — the
+            # common case, e.g. a big array — short-circuits on the fallthrough
+            # below, so this costs nothing there.
+            return resolve_refs(cloudpickle.loads(raw), data_dependencies)
         if value.encoding == ENC_BYTES:
             return raw
         raise ValueError(f"unknown blob encoding: {value.encoding!r}")
