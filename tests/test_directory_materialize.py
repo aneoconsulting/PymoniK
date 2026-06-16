@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 from pathlib import Path
 
 from pymonik import Materialize, task
-from pymonik.blob import _zip_directory
+from pymonik.blob import _zip_directory, content_hash
 from pymonik.testing import LocalCluster
 
 
@@ -41,6 +42,42 @@ def test_zip_directory_is_deterministic(tmp_path):
     _make_tree(a)
     _make_tree(b)
     assert _zip_directory(a) == _zip_directory(b)
+
+
+def _bump_mtime(path: Path, delta: int = 10_000) -> None:
+    # Well past zip's 2-second timestamp resolution.
+    st = path.stat()
+    os.utime(path, (st.st_atime + delta, st.st_mtime + delta))
+
+
+def test_zip_hash_stable_across_mtime_by_default(tmp_path):
+    """H8: identical contents hash identically even if mtimes change, so
+    the within-session blob cache dedups re-uploads."""
+    src = tmp_path / "tree"
+    _make_tree(src)
+    before = content_hash(_zip_directory(src))
+    _bump_mtime(src / "a.txt")
+    _bump_mtime(src / "sub" / "b.txt")
+    assert content_hash(_zip_directory(src)) == before
+
+
+def test_zip_hash_changes_with_content(tmp_path):
+    """Content still drives the hash (mtime-independence isn't blindness)."""
+    src = tmp_path / "tree"
+    _make_tree(src)
+    before = content_hash(_zip_directory(src))
+    (src / "a.txt").write_text("alpha-changed")
+    assert content_hash(_zip_directory(src)) != before
+
+
+def test_zip_preserve_mtime_invalidates_on_newer_timestamp(tmp_path):
+    """preserve_mtime=True folds the file mtime into the archive, so the
+    same bytes with a newer timestamp produce a fresh hash (cache miss)."""
+    src = tmp_path / "tree"
+    _make_tree(src)
+    before = content_hash(_zip_directory(src, preserve_mtime=True))
+    _bump_mtime(src / "a.txt")
+    assert content_hash(_zip_directory(src, preserve_mtime=True)) != before
 
 
 def test_zip_directory_round_trip(tmp_path):

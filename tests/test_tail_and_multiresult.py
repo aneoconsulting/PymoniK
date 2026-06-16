@@ -453,6 +453,45 @@ def test_decoration_rejects_cache_with_multi_output():
             return MultiResult(a=x, b=x * 2)
 
 
+# ---------- H2: multi-output errors fail ALL fields, not just the first ----------
+#
+# The error paths used to resolve only the primary (first-field) future,
+# leaving sibling fields hanging until session close — so awaiting the handle
+# or any non-first field blocked. The old tests only ever read `.a`, so they
+# passed while the bug was live. These read a non-first field and the handle.
+
+
+def test_multi_output_validation_error_fails_all_fields():
+    @task(outputs=("a", "b"))
+    def returns_plain(x):
+        return x  # plain int, not MultiResult → declared-multi error
+
+    with LocalCluster() as client:
+        with client.session():
+            handle = returns_plain.spawn(5)
+            # Non-first field must fail promptly, not hang to a timeout.
+            with pytest.raises(TaskFailed):
+                handle.b.result(timeout=15)
+            # The whole handle (blocks on every field) must fail too.
+            with pytest.raises(TaskFailed):
+                handle.result(timeout=15)
+
+
+def test_multi_output_runtime_exception_fails_all_fields():
+    # The common case beyond validation: the task body just raises.
+    @task(outputs=("a", "b"))
+    def boom(x):
+        raise ValueError("kaboom")
+
+    with LocalCluster() as client:
+        with client.session():
+            handle = boom.spawn(5)
+            with pytest.raises(TaskFailed):
+                handle.b.result(timeout=15)
+            with pytest.raises(TaskFailed):
+                handle.a.result(timeout=15)
+
+
 __all__ = [
     "PymonikConnectionError",
 ]  # silence unused-import warnings

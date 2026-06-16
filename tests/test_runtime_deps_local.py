@@ -111,6 +111,39 @@ def test_per_task_deps_override(tmp_path, monkeypatch):
             assert per_task_numpy.spawn(10).result(timeout=600) == sum(range(10))
 
 
+def test_ctx_injection_in_isolated_subprocess(tmp_path, monkeypatch):
+    """H3 gap: `ctx: pymonik.Ctx` (and current()) work in isolate=True too.
+
+    The detached child has no cancellation/sidecar access, but the parent
+    forwards task/session identity via env vars so the read-only context is
+    populated.
+    """
+    import pymonik
+
+    monkeypatch.setenv("PYMONIK_ENVS_ROOT", str(tmp_path / "envs"))
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
+
+    @task(deps=["numpy"], isolate=True)
+    def isolated_ctx(n: int, *, ctx: pymonik.Ctx) -> dict:
+        import numpy as _np
+
+        return {
+            "sum": int(_np.arange(n).sum()),
+            "task_id": ctx.task_id,
+            "session_id": ctx.session_id,
+            "current_task_id": pymonik.current().task_id,
+        }
+
+    with LocalCluster() as client:
+        with client.session(deps=["numpy"], isolate=True):
+            out = isolated_ctx.spawn(5).result(timeout=600)
+    assert out["sum"] == sum(range(5))
+    assert out["task_id"] and isinstance(out["task_id"], str)
+    assert out["session_id"] and isinstance(out["session_id"], str)
+    # current() resolves to the same task inside the subprocess.
+    assert out["current_task_id"] == out["task_id"]
+
+
 def test_install_failure_surfaces_typed_error(tmp_path, monkeypatch):
     monkeypatch.setenv("PYMONIK_ENVS_ROOT", str(tmp_path / "envs"))
     monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "uv-cache"))
