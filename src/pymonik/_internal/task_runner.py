@@ -74,6 +74,22 @@ def _write_result(stream, tag: bytes, payload: bytes) -> None:
     stream.flush()
 
 
+class _DetachedHandler:
+    """Stand-in task handler for the detached child process.
+
+    Carries only the identity the parent forwards via env vars. It has no
+    agent-sidecar channel and no gRPC server context, so the
+    ``WorkerContext`` built from it can surface ``task_id`` / ``session_id``
+    / ``attempt`` / ``log`` but not cancellation or result-sending.
+    """
+
+    __slots__ = ("task_id", "session_id")
+
+    def __init__(self, task_id: str, session_id: str) -> None:
+        self.task_id = task_id
+        self.session_id = session_id
+
+
 def main() -> int:
     stdin = sys.stdin.buffer
     stdout = sys.stdout.buffer
@@ -101,11 +117,31 @@ def main() -> int:
         # the propagated trace context in the envelope.
         _otel.setup(service_name=os.getenv("OTEL_SERVICE_NAME", "pymonik-worker"))
 
+        from pymonik import context as _ctx_mod
+        from pymonik.context import WorkerContext
+
         env = env_mod.decode(envelope_bytes)
         func = cloudpickle.loads(env.function_pickle)
         args, kwargs = cloudpickle.loads(env.args_pickle)
         args = tuple(resolve_refs(a, data_deps) for a in args)
         kwargs = {k: resolve_refs(v, data_deps) for k, v in kwargs.items()}
+
+        # Worker context for this detached child: both pymonik.current()
+        # and an injected ``ctx: pymonik.Ctx`` parameter work here. Identity
+        # comes from env vars the parent set (see subprocess_dispatch). The
+        # child can't observe cancellation or reach the sidecar, so that
+        # surface of the context is inert — a deliberate isolate-mode limit.
+        worker_ctx = WorkerContext(
+            _DetachedHandler(
+                os.getenv("PYMONIK_TASK_ID", ""),
+                os.getenv("PYMONIK_SESSION_ID", ""),
+            ),
+            attempt=env.attempt,
+        )
+        _ctx_mod._set(worker_ctx)
+        if env.ctx_param:
+            kwargs[env.ctx_param] = worker_ctx
+
         with _otel.use_extracted_context(dict(env.otel_context)):
             with _otel.start_span(
                 "pymonik.task.run",

@@ -92,6 +92,8 @@ def run_in_subprocess(
     envelope_bytes: bytes,
     data_deps: Mapping[str, bytes],
     timeout_s: float | None = None,
+    task_id: str = "",
+    session_id: str = "",
 ) -> bytes:
     """Build (or reuse) the venv, dispatch the task, return cloudpickled result.
 
@@ -125,6 +127,14 @@ def run_in_subprocess(
     if env_spec is not None:
         for k, v in env_spec.env:
             env[k] = v
+    # Task identity for the child's worker context (pymonik.current() /
+    # injected ctx: Ctx). Set last so the framework's ids always win.
+    # The child can't observe cancellation or reach the agent sidecar, so
+    # its context's cancel/sidecar surface is inert — see task_runner.
+    if task_id:
+        env["PYMONIK_TASK_ID"] = task_id
+    if session_id:
+        env["PYMONIK_SESSION_ID"] = session_id
 
     proc = subprocess.Popen(
         [str(py), "-m", "pymonik._internal.task_runner"],
