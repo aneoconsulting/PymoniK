@@ -63,12 +63,10 @@ from armonik.client import (
     ArmoniKResults,
     ArmoniKSessions,
     ArmoniKTasks,
-    PartitionFieldFilter,
-    SessionFieldFilter,
     TaskFieldFilter,
 )
-from armonik.common import Direction, Result
-from armonik.common.filter import Filter
+from armonik.common import Direction, Partition, Result, Session, Task
+from armonik.common.filter import ArrayFilter, Filter
 
 from pymonik._internal.info import (
     PartitionInfo,
@@ -123,46 +121,83 @@ _TASK_FIELDS: dict[str, Filter] = {
     "creation_to_end_duration": TaskFieldFilter.CREATION_TO_END_DURATION,
     "processing_to_end_duration": TaskFieldFilter.PROCESSING_TO_END_DURATION,
     "pod_ttl": TaskFieldFilter.POD_TTL,
+    # Scalar fields the convenience TaskFieldFilter doesn't re-export —
+    # sourced straight from the Task model. (List/struct fields like
+    # parent_task_ids, data_dependencies, options, output are filterable
+    # only via membership/sub-field ops the kwargs grammar can't express,
+    # so they're deliberately left out.)
+    "payload_id": Task.payload_id,
+    "created_by": Task.created_by,
+    "processed_at": Task.processed_at,
+    "fetched_at": Task.fetched_at,
+    "received_to_end_duration": Task.received_to_end_duration,
 }
 
 # Upstream ``armonik.client.ResultFieldFilter`` only re-exports RESULT_ID and
 # STATUS, but the ``Result`` model itself exposes more filterable fields — most
 # importantly ``session_id``, which lets session-scoped result queries filter
-# server-side instead of walking the session's tasks.
+# server-side instead of walking the session's tasks. (``opaque_id`` isn't
+# filterable; ``size`` is the stored payload size.)
 _RESULT_FIELDS: dict[str, Filter] = {
     "id": Result.result_id,
     "result_id": Result.result_id,
     "session_id": Result.session_id,
     "status": Result.status,
     "name": Result.name,
+    "owner_task_id": Result.owner_task_id,
+    "created_by": Result.created_by,
+    "size": Result.size,
     "created_at": Result.created_at,
     "completed_at": Result.completed_at,
 }
 
+# ``armonik.client.SessionFieldFilter`` only re-exports STATUS; the Session
+# model exposes far more. Scalar fields sourced from the model directly;
+# ``partition_ids`` is an ArrayFilter (use ``partition_ids__contains=…``) and
+# ``options`` is reached via the struct grammar (see ``SessionQuery._STRUCTS``).
 _SESSION_FIELDS: dict[str, Filter] = {
-    "status": SessionFieldFilter.STATUS,
+    "id": Session.session_id,
+    "session_id": Session.session_id,
+    "status": Session.status,
+    "client_submission": Session.client_submission,
+    "worker_submission": Session.worker_submission,
+    "duration": Session.duration,
+    "partition_ids": Session.partition_ids,
+    "created_at": Session.created_at,
+    "cancelled_at": Session.cancelled_at,
+    "closed_at": Session.closed_at,
+    "deleted_at": Session.deleted_at,
+    "purged_at": Session.purged_at,
 }
 
+# ``armonik.client.PartitionFieldFilter`` only re-exports PRIORITY; the
+# Partition model also exposes its id, pod-sizing knobs, and a
+# ``parent_partition_ids`` ArrayFilter (``parent_partition_ids__contains=…``).
+# (``pod_configuration`` isn't filterable.)
 _PARTITION_FIELDS: dict[str, Filter] = {
-    "priority": PartitionFieldFilter.PRIORITY,
+    "id": Partition.id,
+    "priority": Partition.priority,
+    "pod_max": Partition.pod_max,
+    "pod_reserved": Partition.pod_reserved,
+    "preemption_percentage": Partition.preemption_percentage,
+    "parent_partition_ids": Partition.parent_partition_ids,
 }
 
 
-def _build_predicate(
-    fields: Mapping[str, Filter],
-    name: str,
-    op: Optional[str],
-    value: Any,
-) -> Filter:
-    """Translate ``name__op=value`` into an upstream filter expression."""
-    if name not in fields:
-        allowed = ", ".join(sorted(fields))
-        raise ValueError(
-            f"unknown field {name!r} for this resource; "
-            f"upstream supports: {allowed}"
-        )
-    f = fields[name]
+# Predicate suffixes the kwargs grammar understands (``field__suffix=value``).
+_OP_SUFFIXES = frozenset(
+    {
+        "ne", "lt", "lte", "le", "gt", "gte", "ge", "in",
+        "startswith", "endswith", "contains", "notcontains",
+    }
+)
 
+
+def _apply_op(f: Filter, op: Optional[str], value: Any, name: str) -> Filter:
+    """Apply one predicate operator to an upstream filter field.
+
+    ``name`` is used only for error messages.
+    """
     # datetime convenience: pass-through to the filter (upstream DateFilter
     # handles datetime values directly).
     if op is None:
@@ -189,7 +224,6 @@ def _build_predicate(
         for v in rest:
             out = out | (f == v)
         return out
-    # String-only ops — these live as methods on the upstream filter.
     if op == "startswith":
         if not hasattr(f, "startswith"):
             raise ValueError(f"{name} doesn't support startswith")
@@ -198,30 +232,79 @@ def _build_predicate(
         if not hasattr(f, "endswith"):
             raise ValueError(f"{name} doesn't support endswith")
         return f.endswith(value)
+    # ``contains``/``notcontains`` cover StringFilter (substring) AND
+    # ArrayFilter (membership). ``contains_`` is the operator *constant*; the
+    # callable is ``contains(value)``, and ``~`` flips it to not-contains.
     if op == "contains":
-        if not hasattr(f, "contains_"):
+        if getattr(f, "contains_", None) is None:
             raise ValueError(f"{name} doesn't support contains")
-        return f.contains_(value)
+        return f.contains(value)
     if op == "notcontains":
-        if not hasattr(f, "notcontains_"):
+        if getattr(f, "contains_", None) is None:
             raise ValueError(f"{name} doesn't support notcontains")
-        return f.notcontains_(value)
+        return f.contains(value).__invert__()
     raise ValueError(f"unknown predicate suffix __{op}=")
 
 
-def _filters_from_kwargs(
+def _build_predicate(
     fields: Mapping[str, Filter],
-    kwargs: Mapping[str, Any],
-) -> list[Filter]:
-    """Translate a ``where(**kwargs)`` call into a list of filters."""
-    out: list[Filter] = []
-    for key, value in kwargs.items():
-        if "__" in key:
-            name, op = key.rsplit("__", 1)
-        else:
-            name, op = key, None
-        out.append(_build_predicate(fields, name, op, value))
-    return out
+    name: str,
+    op: Optional[str],
+    value: Any,
+) -> Filter:
+    """Translate ``name__op=value`` over a flat field into a filter."""
+    if name not in fields:
+        allowed = ", ".join(sorted(fields))
+        raise ValueError(
+            f"unknown field {name!r} for this resource; "
+            f"upstream supports: {allowed}"
+        )
+    f = fields[name]
+    if isinstance(f, ArrayFilter) and op not in ("contains", "notcontains"):
+        raise ValueError(
+            f"array field {name!r} supports only membership — use "
+            f"{name}__contains=… / {name}__notcontains=…"
+        )
+    return _apply_op(f, op, value, name)
+
+
+def _resolve_struct_field(wrapper: Any, struct: str, sub: str) -> Filter:
+    """Resolve ``struct.sub`` to a filter field.
+
+    A typed sub-field (a property such as ``options.partition_id`` or
+    ``output.error``) wins; otherwise, for the task-options struct, the name
+    is treated as a user-defined option key via ``wrapper[sub]``.
+    """
+    attr = getattr(type(wrapper), sub, None)
+    if isinstance(attr, property):
+        return getattr(wrapper, sub)
+    if hasattr(wrapper, "__getitem__"):
+        return wrapper[sub]  # arbitrary task-option key -> StringFilter
+    raise ValueError(f"{struct!r} has no sub-field {sub!r}")
+
+
+def _struct_predicate(wrapper: Any, struct: str, key: str, value: Any) -> Filter:
+    """Translate ``struct__sub[__op]=value`` into a filter on a sub-field.
+
+    ``key`` is the full kwarg (e.g. ``options__partition_id`` or
+    ``options__my_key__startswith``). The trailing token counts as an
+    operator only when it's a recognised suffix, so option keys that don't
+    collide with a suffix work unquoted.
+    """
+    rest = key.split("__")[1:]
+    if not rest:
+        raise ValueError(
+            f"{struct!r} is a struct field — filter a sub-field, e.g. "
+            f"{struct}__partition_id=…"
+        )
+    if len(rest) >= 2 and rest[-1] in _OP_SUFFIXES:
+        op: Optional[str] = rest[-1]
+        sub = "__".join(rest[:-1])
+    else:
+        op = None
+        sub = "__".join(rest)
+    field = _resolve_struct_field(wrapper, struct, sub)
+    return _apply_op(field, op, value, f"{struct}.{sub}")
 
 
 def _and_all(filters: Iterable[Filter]) -> Optional[Filter]:
@@ -253,6 +336,11 @@ class _BaseQuery(Generic[T]):
     list/mutation methods specific to the resource."""
 
     _FIELDS: dict[str, Filter] = {}
+    # Struct/sub-field accessors: ``{name: () -> FilterWrapper}``. A kwarg whose
+    # leading segment matches routes to the wrapper's sub-fields (e.g.
+    # ``options__partition_id=…``, ``output__error__contains=…``). Empty for
+    # resources without struct fields.
+    _STRUCTS: dict[str, Any] = {}
 
     __slots__ = ("_ctx", "_state")
 
@@ -265,10 +353,25 @@ class _BaseQuery(Generic[T]):
     def _replace(self, **patch: Any):
         return type(self)(self._ctx, replace(self._state, **patch))
 
+    def _kwarg_predicate(self, key: str, value: Any) -> Filter:
+        head = key.split("__", 1)[0]
+        if head in self._STRUCTS:
+            return _struct_predicate(self._STRUCTS[head](), head, key, value)
+        if "__" in key:
+            name, op = key.rsplit("__", 1)
+        else:
+            name, op = key, None
+        return _build_predicate(self._FIELDS, name, op, value)
+
     def where(self, **kwargs: Any):
-        """AND new predicates with whatever's already there."""
-        new_filters = self._state.filters + tuple(_filters_from_kwargs(self._FIELDS, kwargs))
-        return self._replace(filters=new_filters)
+        """AND new predicates with whatever's already there.
+
+        Flat fields use ``field=…`` / ``field__op=…``; array fields use
+        ``field__contains=…``; struct fields use ``struct__subfield[__op]=…``
+        (e.g. ``options__partition_id=…``, ``output__error__contains=…``).
+        """
+        preds = tuple(self._kwarg_predicate(k, v) for k, v in kwargs.items())
+        return self._replace(filters=self._state.filters + preds)
 
     def where_expr(self, expr: Filter):
         """AND a raw upstream filter expression with the existing predicates.
@@ -441,6 +544,9 @@ class TaskQuery(_BaseQuery[TaskInfo]):
     to a session (auto-scoped to that ``session_id``)."""
 
     _FIELDS = _TASK_FIELDS
+    # Struct sub-fields: ``options__partition_id=…`` / ``options__<key>=…``
+    # (user-defined task options) and ``output__error__contains=…``.
+    _STRUCTS = {"options": lambda: Task.options, "output": lambda: Task.output}
 
     def _filter(self) -> Optional[Filter]:
         f = super()._filter()
@@ -615,6 +721,9 @@ class SessionQuery(_BaseQuery[SessionInfo]):
     on the context (a session can't filter itself)."""
 
     _FIELDS = _SESSION_FIELDS
+    # Default task options as a struct: ``options__partition_id=…``,
+    # ``options__max_retries__gt=…``, or arbitrary ``options__<key>=…``.
+    _STRUCTS = {"options": lambda: Session.options}
 
     def _fetch_page(self, page: int, page_size: int) -> tuple[int, list[SessionInfo]]:
         sort_field, sort_dir = self._sort_args()

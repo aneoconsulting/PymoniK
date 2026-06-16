@@ -82,6 +82,7 @@ python-version = "3.11"
 testpaths = ["tests"]
 markers = [
     "slow: tests that take more than a few seconds (e.g. real `uv` env builds)",
+    "e2e: tests that require a running ArmoniK cluster (skipped unless AKCONFIG is set / reachable)",
 ]
 
 # Python 3.13 cap rationale:
