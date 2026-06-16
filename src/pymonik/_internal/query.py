@@ -64,11 +64,10 @@ from armonik.client import (
     ArmoniKSessions,
     ArmoniKTasks,
     PartitionFieldFilter,
-    ResultFieldFilter,
     SessionFieldFilter,
     TaskFieldFilter,
 )
-from armonik.common import Direction
+from armonik.common import Direction, Result
 from armonik.common.filter import Filter
 
 from pymonik._internal.info import (
@@ -90,11 +89,6 @@ _DEFAULT_PAGE_SIZE = 100
 # Cap how many items .list() will materialise before forcing pagination
 # semantics on the caller. Above this users should iterate.
 _MAX_LIST_ITEMS = 10_000
-
-
-# Per-instance memoisation for ResultQuery's session-scoped candidate
-# id enumeration. Keyed by id(query) to avoid touching the frozen state.
-_SCOPED_CANDIDATE_CACHE: dict[int, list[str]] = {}
 
 
 # ---------- predicate translation ----------
@@ -131,10 +125,18 @@ _TASK_FIELDS: dict[str, Filter] = {
     "pod_ttl": TaskFieldFilter.POD_TTL,
 }
 
+# Upstream ``armonik.client.ResultFieldFilter`` only re-exports RESULT_ID and
+# STATUS, but the ``Result`` model itself exposes more filterable fields — most
+# importantly ``session_id``, which lets session-scoped result queries filter
+# server-side instead of walking the session's tasks.
 _RESULT_FIELDS: dict[str, Filter] = {
-    "id": ResultFieldFilter.RESULT_ID,
-    "result_id": ResultFieldFilter.RESULT_ID,
-    "status": ResultFieldFilter.STATUS,
+    "id": Result.result_id,
+    "result_id": Result.result_id,
+    "session_id": Result.session_id,
+    "status": Result.status,
+    "name": Result.name,
+    "created_at": Result.created_at,
+    "completed_at": Result.completed_at,
 }
 
 _SESSION_FIELDS: dict[str, Filter] = {
@@ -487,102 +489,39 @@ class TaskQuery(_BaseQuery[TaskInfo]):
 class ResultQuery(_BaseQuery[ResultInfo]):
     """Query / mutate results.
 
-    Cluster-wide (``client.results``) lists everything visible to the
-    caller and supports the upstream filter fields (``id``, ``status``).
-    Session-scoped (``session.results``) is correct but slightly more
-    expensive: ``list_results`` doesn't expose ``session_id`` as a
-    filter field, so we enumerate the session's tasks first to collect
-    their ``expected_output_ids``, then query results by those ids in
-    chunks.
+    Cluster-wide (``client.results``) lists every result visible to the
+    caller. Session-scoped (``session.results``) ANDs a ``session_id ==``
+    predicate into every query — the same shape :class:`TaskQuery` uses —
+    so the cluster filters server-side in one paginated pass.
+
+    "Results in this session" means *all* of them: task outputs, uploaded
+    blobs, auto-spilled args, and task payloads. (An earlier version
+    enumerated the session's tasks and kept only their
+    ``expected_output_ids``, which both cost an extra task walk and
+    silently dropped non-output results.)
     """
 
     _FIELDS = _RESULT_FIELDS
 
-    # Cap how big a single RESULT_ID OR-chain we'll send in one
-    # ``list_results`` call. Each clause adds bytes to the protobuf
-    # filter message; 100 keeps us well under the 4 MiB cap and matches
-    # the polling-loop chunking convention from session.py.
-    _RID_CHUNK = 100
+    def _filter(self) -> Optional[Filter]:
+        f = super()._filter()
+        if self._ctx.scoped_session_id is None:
+            return f
+        scope = Result.session_id == self._ctx.scoped_session_id
+        return scope if f is None else (scope & f)
 
     def _fetch_page(self, page: int, page_size: int) -> tuple[int, list[ResultInfo]]:
         sort_field, sort_dir = self._sort_args()
-
-        if self._ctx.scoped_session_id is None:
-            # Cluster-wide: straight pass-through.
-            kwargs: dict[str, Any] = dict(
-                result_filter=self._filter(),
-                page=page,
-                page_size=page_size,
-                sort_direction=sort_dir,
-            )
-            if sort_field is not None:
-                kwargs["sort_field"] = sort_field
-            total, items = self._ctx.results.list_results(**kwargs)
-            return total, [ResultInfo.from_armonik(r) for r in items]
-
-        # Session-scoped: collect candidate result_ids from the session's
-        # tasks, paginate the candidates, query each page by id-chain.
-        candidates = self._scoped_candidate_ids()
-        start = page * page_size
-        end = start + page_size
-        chunk_ids = candidates[start:end]
-        if not chunk_ids:
-            return len(candidates), []
-
-        rid_field = ResultFieldFilter.RESULT_ID
-        # Sub-chunk RESULT_ID OR-chains to stay under the protobuf cap.
-        results: list[Any] = []
-        for i in range(0, len(chunk_ids), self._RID_CHUNK):
-            sub = chunk_ids[i : i + self._RID_CHUNK]
-            id_filter = rid_field == sub[0]
-            for r in sub[1:]:
-                id_filter = id_filter | (rid_field == r)
-            user_filter = self._filter()
-            combined = id_filter if user_filter is None else (id_filter & user_filter)
-            list_kwargs: dict[str, Any] = dict(
-                result_filter=combined,
-                page=0,
-                page_size=len(sub),
-                sort_direction=sort_dir,
-            )
-            if sort_field is not None:
-                list_kwargs["sort_field"] = sort_field
-            _t, items = self._ctx.results.list_results(**list_kwargs)
-            results.extend(items)
-
-        return len(candidates), [ResultInfo.from_armonik(r) for r in results]
-
-    def _scoped_candidate_ids(self) -> list[str]:
-        """Enumerate ``expected_output_ids`` for every task in the session.
-
-        Memoised per-instance so a ``.list()`` followed by a ``.count()``
-        doesn't re-walk the session twice.
-        """
-        # __slots__ on the base prohibits arbitrary attrs; use the state
-        # dict-style by storing on the type's own __dict__ via a side cache.
-        cached = _SCOPED_CANDIDATE_CACHE.get(id(self))
-        if cached is not None:
-            return cached
-        sid = self._ctx.scoped_session_id
-        assert sid is not None
-        task_filter = TaskFieldFilter.SESSION_ID == sid
-        ids: list[str] = []
-        page = 0
-        page_size = 500
-        while True:
-            total, items = self._ctx.tasks.list_tasks(
-                task_filter=task_filter,
-                page=page,
-                page_size=page_size,
-                with_errors=False,
-            )
-            for t in items:
-                ids.extend(t.expected_output_ids or [])
-            if (page + 1) * page_size >= total or not items:
-                break
-            page += 1
-        _SCOPED_CANDIDATE_CACHE[id(self)] = ids
-        return ids
+        kwargs: dict[str, Any] = dict(
+            result_filter=self._filter(),
+            page=page,
+            page_size=page_size,
+            sort_direction=sort_dir,
+        )
+        if sort_field is not None:
+            kwargs["sort_field"] = sort_field
+        total, items = self._ctx.results.list_results(**kwargs)
+        return total, [ResultInfo.from_armonik(r) for r in items]
 
     # ---- mutations ----
 
