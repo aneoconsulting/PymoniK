@@ -143,7 +143,9 @@ def upload(value: Any) -> Blob[Any]:
     return Blob(result_id, encoding=encoding, size=len(data))
 
 
-def materialize(source: Path | str, *, at: str) -> Materialize:
+def materialize(
+    source: Path | str, *, at: str, preserve_mtime: bool = False
+) -> Materialize:
     """Upload ``source`` and request placement at ``at`` on the worker.
 
     Files: bytes are written to ``at`` before the task runs.
@@ -152,10 +154,19 @@ def materialize(source: Path | str, *, at: str) -> Materialize:
 
     ``at`` is absolute (or relative to the worker's working dir). The
     task parameter receives a ``pathlib.Path(at)``.
+
+    ``preserve_mtime`` (directories only): by default file modification
+    times are normalised in the archive so identical contents hash
+    identically — the within-session blob cache then dedups re-uploads
+    of the same tree. Pass ``preserve_mtime=True`` to fold each file's
+    mtime into the archive instead, so re-materialising the same bytes
+    with a newer timestamp produces a different hash and re-uploads
+    (deliberate cache invalidation). No effect on single-file sources:
+    a file is hashed by its raw bytes, which never carry the mtime.
     """
     src = Path(source)
     if src.is_dir():
-        data = _zip_directory(src)
+        data = _zip_directory(src, preserve_mtime=preserve_mtime)
         session = current_session()
         result_id = session._upload_blob(data)
         return Materialize(
@@ -167,17 +178,43 @@ def materialize(source: Path | str, *, at: str) -> Materialize:
     return Materialize(result_id, worker_path=at, size=len(data), is_dir=False)
 
 
-def _zip_directory(root: Path) -> bytes:
-    """Zip a directory into bytes, deterministically (sorted entries).
+# Zip's epoch floor (DOS date). Pinning every entry here makes the archive
+# bytes — and thus the SHA-256 — independent of file mtimes.
+_FIXED_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
-    Sorting keeps the SHA-256 stable, so re-uploads of the same dir
-    contents dedup via the session's blob cache.
+
+def _zip_directory(root: Path, *, preserve_mtime: bool = False) -> bytes:
+    """Zip a directory into bytes with a stable entry order.
+
+    Entries are sorted so ordering never perturbs the output. By default
+    each entry's timestamp is pinned to a fixed epoch and only the file
+    content and mode are carried, so the SHA-256 depends on *content*
+    (and perms), not on mtimes — re-zipping an unchanged tree yields
+    identical bytes, which the session blob cache dedups. Sorting alone
+    does NOT achieve this: ``ZipFile.write`` stamps each entry with the
+    file's real mtime, so the hash would otherwise shift whenever a file
+    was touched.
+
+    ``preserve_mtime=True`` keeps the real per-file mtimes in the
+    archive, so a newer timestamp on otherwise-identical content changes
+    the hash (deliberate cache invalidation).
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(root.rglob("*")):
-            if path.is_file():
-                zf.write(path, path.relative_to(root))
+            if not path.is_file():
+                continue
+            arcname = str(path.relative_to(root))
+            if preserve_mtime:
+                zf.write(path, arcname)
+                continue
+            info = zipfile.ZipInfo(arcname, date_time=_FIXED_ZIP_DATE)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            # Carry the file's permission/type bits (matching ZipFile.write)
+            # so executables stay executable on extraction. Perms are stable
+            # across re-zips of the same tree, so the hash stays stable too.
+            info.external_attr = (path.stat().st_mode & 0xFFFF) << 16
+            zf.writestr(info, path.read_bytes())
     return buf.getvalue()
 
 
