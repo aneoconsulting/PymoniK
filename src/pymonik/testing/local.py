@@ -56,7 +56,7 @@ from pymonik._internal.exec_cache import ExecCache, default_cache_dir
 from pymonik._internal.refs import auto_spill, extract_deps, resolve_refs
 from pymonik._internal.submit import normalise_calls, submit_many
 from pymonik.context import WorkerContext
-from pymonik.errors import TaskCancelled, TaskFailed
+from pymonik.errors import PymonikError, TaskCancelled, TaskFailed
 from pymonik.future import Future, FutureList
 from pymonik.options import EMPTY, TaskOpts
 from pymonik.task import Task, _current_session
@@ -712,23 +712,25 @@ class LocalSession:
             child_multi = child_task.multi_fields or ()
             if multi_fields:
                 if child_multi != multi_fields:
-                    fut._resolve_error(
+                    self._fail_task(
+                        output_ids,
                         TaskFailed(
                             task_id,
                             f"tail-called task {child_task.name!r} declares "
                             f"{list(child_multi)}, parent declares "
                             f"{list(multi_fields)}",
-                        )
+                        ),
                     )
                     return
             else:
                 if child_multi:
-                    fut._resolve_error(
+                    self._fail_task(
+                        output_ids,
                         TaskFailed(
                             task_id,
                             f"tail-called task {child_task.name!r} is multi-output "
                             f"but parent is single-output",
-                        )
+                        ),
                     )
                     return
             self._submit_tail(
@@ -739,23 +741,25 @@ class LocalSession:
         # ---- multi-output return ----
         if isinstance(result, MultiResult):
             if not multi_fields:
-                fut._resolve_error(
+                self._fail_task(
+                    output_ids,
                     TaskFailed(
                         task_id,
                         "function returned MultiResult but task wasn't declared "
                         "multi-output (decoration didn't extract a schema).",
-                    )
+                    ),
                 )
                 return
             returned = set(result.fields.keys())
             declared = set(multi_fields)
             if returned != declared:
-                fut._resolve_error(
+                self._fail_task(
+                    output_ids,
                     TaskFailed(
                         task_id,
                         f"MultiResult shape mismatch: declared {sorted(declared)}, "
                         f"returned {sorted(returned)}",
-                    )
+                    ),
                 )
                 return
 
@@ -764,12 +768,13 @@ class LocalSession:
                 oid = field_to_oid[field]
                 if isinstance(value, TailPromise):
                     if value._task.multi_fields:
-                        fut._resolve_error(
+                        self._fail_task(
+                            output_ids,
                             TaskFailed(
                                 task_id,
                                 f"field {field!r} delegates to multi-output task "
                                 f"{value._task.name!r}; not supported",
-                            )
+                            ),
                         )
                         return
                     # Each per-field tail submits its own dispatch with
@@ -780,21 +785,23 @@ class LocalSession:
                         value, expected_output_ids=[oid]
                     )
                 elif isinstance(value, Future):
-                    fut._resolve_error(
+                    self._fail_task(
+                        output_ids,
                         TaskFailed(
                             task_id,
                             f"field {field!r} is a Future from .spawn() — "
                             f"use .tail() for delegation",
-                        )
+                        ),
                     )
                     return
                 elif isinstance(value, _MRH):
-                    fut._resolve_error(
+                    self._fail_task(
+                        output_ids,
                         TaskFailed(
                             task_id,
                             f"field {field!r} is a MultiResultHandle; nested "
                             f"per-field access isn't supported",
-                        )
+                        ),
                     )
                     return
                 else:
@@ -807,20 +814,22 @@ class LocalSession:
 
         # ---- plain single-output return ----
         if multi_fields:
-            fut._resolve_error(
+            self._fail_task(
+                output_ids,
                 TaskFailed(
                     task_id,
                     f"task declared multi-output {list(multi_fields)} but "
                     f"returned {type(result).__name__} (expected MultiResult)",
-                )
+                ),
             )
             return
 
         try:
             pickled = cloudpickle.dumps(result)
         except Exception as e:
-            fut._resolve_error(
-                TaskFailed(task_id, f"could not pickle result: {e!r}")
+            self._fail_task(
+                output_ids,
+                TaskFailed(task_id, f"could not pickle result: {e!r}"),
             )
             return
 
@@ -842,6 +851,22 @@ class LocalSession:
         """Look up the per-field Future registered for this output id."""
         with self._lock:
             return self._pending.get(output_id)
+
+    def _fail_task(self, output_ids: list[str], err: PymonikError) -> None:
+        """Fail every output id's registered future with the same error.
+
+        Mirrors the real cluster: a task that errors aborts *all* its
+        expected outputs at once, so every field of a MultiResult fails
+        promptly with the same TaskFailed. The earlier code resolved only
+        the primary (first-field) future on a multi-output error, leaving
+        sibling fields unresolved until session close — awaiting the
+        handle, or any non-first field, hung. Idempotent: ``_resolve_error``
+        no-ops on an already-resolved future.
+        """
+        for oid in output_ids:
+            ff = self._field_future_for(oid)
+            if ff is not None:
+                ff._resolve_error(err)
 
     def _dispatch(
         self,
@@ -886,21 +911,23 @@ class LocalSession:
                         data_deps[rid] = self._blob_bytes[rid]
                     else:
                         # Upstream cancelled or missing.
-                        fut._resolve_error(
-                            TaskFailed(task_id, f"upstream {rid} unavailable")
+                        self._fail_task(
+                            output_ids,
+                            TaskFailed(task_id, f"upstream {rid} unavailable"),
                         )
                         return
 
             if cancel_ev.is_set():
-                fut._resolve_error(TaskCancelled(task_id))
+                self._fail_task(output_ids, TaskCancelled(task_id))
                 return
 
             # Decode the envelope and resolve refs.
             try:
                 envelope = env_mod.decode(payload_bytes)
             except Exception as e:
-                fut._resolve_error(
-                    TaskFailed(task_id, f"local envelope decode failed: {e!r}")
+                self._fail_task(
+                    output_ids,
+                    TaskFailed(task_id, f"local envelope decode failed: {e!r}"),
                 )
                 return
 
@@ -919,6 +946,8 @@ class LocalSession:
                         env_spec=envelope.env_spec,
                         envelope_bytes=payload_bytes,
                         data_deps=data_deps,
+                        task_id=task_id,
+                        session_id=self._session_id,
                     )
                 except TaskFailed as e:
                     fut._resolve_error(e)
@@ -958,8 +987,9 @@ class LocalSession:
                     if envelope.env_spec.env:
                         prior_env = apply_env_overlay(envelope.env_spec.env)
                 except Exception as e:
-                    fut._resolve_error(
-                        TaskFailed(task_id, f"local env build failed: {e!r}")
+                    self._fail_task(
+                        output_ids,
+                        TaskFailed(task_id, f"local env build failed: {e!r}"),
                     )
                     return
 
@@ -1023,6 +1053,10 @@ class LocalSession:
                                     k: resolve_refs(v, data_deps)
                                     for k, v in kwargs.items()
                                 }
+                            # Typed ctx injection (RFC §6.4) — mirrors
+                            # worker._process so LocalCluster matches prod.
+                            if envelope.ctx_param:
+                                kwargs[envelope.ctx_param] = worker_ctx
                             with _otel_mod.start_span(
                                 "pymonik.task.run",
                                 attrs={
@@ -1035,12 +1069,13 @@ class LocalSession:
                             ):
                                 result = func(*args, **kwargs)
                 except TaskCancelled:
-                    fut._resolve_error(TaskCancelled(task_id))
+                    self._fail_task(output_ids, TaskCancelled(task_id))
                     return
                 except Exception as e:
                     tb = traceback.format_exc()
-                    fut._resolve_error(
-                        TaskFailed(task_id, f"{type(e).__name__}: {e}\n{tb}")
+                    self._fail_task(
+                        output_ids,
+                        TaskFailed(task_id, f"{type(e).__name__}: {e}\n{tb}"),
                     )
                     return
             finally:
