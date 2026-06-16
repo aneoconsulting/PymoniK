@@ -283,11 +283,7 @@ def _process(task_handler: TaskHandler) -> Output:
         # are applied to the child's environment by run_in_subprocess.
         # Note: subprocess path doesn't (yet) support TailPromise / MultiResult
         # — those need agent-sidecar access, which the child doesn't have.
-        if (
-            envelope.env_spec is not None
-            and envelope.env_spec.deps
-            and envelope.env_spec.isolate
-        ):
+        if envelope.env_spec is not None and envelope.env_spec.deps and envelope.env_spec.isolate:
             from pymonik._internal.subprocess_dispatch import run_in_subprocess
 
             if is_multi:
@@ -300,6 +296,8 @@ def _process(task_handler: TaskHandler) -> Output:
                 env_spec=envelope.env_spec,
                 envelope_bytes=task_handler.payload,
                 data_deps=data_deps,
+                task_id=task_handler.task_id,
+                session_id=task_handler.session_id,
             )
             task_handler.send_results({parent_output_ids[0]: result_pickle})
             log.info(
@@ -366,24 +364,22 @@ def _process(task_handler: TaskHandler) -> Output:
                             "pymonik.task.resolve_refs",
                             attrs={
                                 "pymonik.data_deps": len(data_deps),
-                                "pymonik.bytes_in": sum(
-                                    len(v) for v in data_deps.values()
-                                ),
+                                "pymonik.bytes_in": sum(len(v) for v in data_deps.values()),
                             },
                         ):
                             args = tuple(resolve_refs(a, data_deps) for a in args)
-                            kwargs = {
-                                k: resolve_refs(v, data_deps) for k, v in kwargs.items()
-                            }
+                            kwargs = {k: resolve_refs(v, data_deps) for k, v in kwargs.items()}
 
                     worker_ctx = WorkerContext(
                         task_handler,
                         grpc_context=_grpc_ctx_var.get(),
                         attempt=envelope.attempt,
                     )
-                    session = WorkerSession(
-                        task_handler, parent_output_ids=parent_output_ids
-                    )
+                    # Typed ctx injection: a parameter annotated
+                    # ``pymonik.Ctx`` receives the live context as a keyword.
+                    if envelope.ctx_param:
+                        kwargs[envelope.ctx_param] = worker_ctx
+                    session = WorkerSession(task_handler, parent_output_ids=parent_output_ids)
 
                     from pymonik.task import _current_session as _cs
 

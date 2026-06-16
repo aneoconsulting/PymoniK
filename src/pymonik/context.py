@@ -108,6 +108,18 @@ class WorkerContext:
             raise TaskCancelled(self._th.task_id)
 
 
+# Public alias for the typed dependency-injection form:
+#
+#     @task
+#     def render(scene: Scene, *, ctx: pymonik.Ctx) -> bytes:
+#         ctx.log.info("rendering", id=ctx.task_id)
+#
+# A parameter annotated ``pymonik.Ctx`` (or ``WorkerContext``) is detected
+# at decoration and the live context is injected by the worker at dispatch.
+# Equivalent to calling ``pymonik.current()`` inside the body.
+Ctx = WorkerContext
+
+
 _current: contextvars.ContextVar[WorkerContext | None] = contextvars.ContextVar(
     "_pymonik_worker_ctx", default=None
 )

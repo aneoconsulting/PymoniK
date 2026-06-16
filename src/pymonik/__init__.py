@@ -44,7 +44,7 @@ from pymonik.composition import (
     gather,
     gather_sync,
 )
-from pymonik.context import WorkerContext, current
+from pymonik.context import Ctx, WorkerContext, current
 from pymonik.errors import (
     ConnectionError as PymonikConnectionError,
     NotInSessionError,
@@ -75,6 +75,7 @@ __all__ = [
     "as_completed_sync",
     "current",
     "WorkerContext",
+    "Ctx",
     "blob",
     "Blob",
     "Materialize",

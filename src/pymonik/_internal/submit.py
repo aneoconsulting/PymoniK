@@ -247,7 +247,17 @@ def submit_many(
                 env=tuple(sorted(env_dict.items())),
             )
 
+        ctx_param = task.ctx_param or ""
+
         for args, kwargs in normalised:
+            # The worker injects the WorkerContext under the ctx param; the
+            # caller must not supply it (it has no client-side value).
+            if ctx_param and ctx_param in kwargs:
+                raise PymonikError(
+                    f"task {task.name!r} receives its worker context via the "
+                    f"injected {ctx_param!r} parameter (ctx: pymonik.Ctx); it's "
+                    f"supplied by the worker — don't pass it at spawn time."
+                )
             deps: list[str] = []
             args_rewritten = tuple(extract_deps(a, deps) for a in args)
             kwargs_rewritten = {k: extract_deps(v, deps) for k, v in kwargs.items()}
@@ -267,6 +277,7 @@ def submit_many(
                 env_spec=env_spec,
                 otel_context=otel_ctx_tuple,
                 multi_fields=multi_fields,
+                ctx_param=ctx_param,
             )
             name = f"{backend.session_id}__pl__{task.name}__{uuid.uuid4()}"
             payload_names.append(name)

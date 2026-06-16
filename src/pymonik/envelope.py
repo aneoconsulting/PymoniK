@@ -95,6 +95,11 @@ class TaskEnvelope(msgspec.Struct, frozen=True, kw_only=True):
     # ``expected_results`` to map each MultiResult field to its
     # ArmoniK output id.
     multi_fields: tuple[str, ...] = ()
+    # Name of the parameter annotated ``pymonik.Ctx`` / ``WorkerContext``,
+    # detected at decoration. Empty when the function takes no context
+    # parameter. The worker injects the live ``WorkerContext`` under this
+    # keyword before calling the function.
+    ctx_param: str = ""
 
 
 def encode(envelope: TaskEnvelope) -> bytes:

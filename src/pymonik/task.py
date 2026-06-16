@@ -23,12 +23,14 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import inspect
 from typing import Any, Callable, Generic, Iterable, ParamSpec, TypeVar, overload
 
 import anyio
 
 from pymonik._internal._ast_introspect import extract_multi_fields
 from pymonik._internal.protocols import SubmittableSession
+from pymonik.context import WorkerContext
 from pymonik.errors import NotInSessionError, PymonikError
 from pymonik.future import Future, FutureList
 from pymonik.multiresult import TailPromise
@@ -38,11 +40,43 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 
+def _detect_ctx_param(func: Callable[..., Any]) -> str | None:
+    """Name of the parameter annotated ``pymonik.Ctx`` / ``WorkerContext``.
+
+    Detected by inspecting the signature. Handles both eager
+    annotations and ``from __future__ import annotations`` strings — the
+    latter are resolved against the function's module globals; if that
+    fails we fall back to matching the raw annotation text.
+    """
+    try:
+        sig = inspect.signature(func)
+    except (ValueError, TypeError):
+        return None
+    try:
+        hints = inspect.get_annotations(func, eval_str=True)
+    except Exception:
+        try:
+            hints = inspect.get_annotations(func)
+        except Exception:
+            hints = {}
+    for name in sig.parameters:
+        ann = hints.get(name)
+        # ``Ctx`` is an alias for ``WorkerContext`` (same object), so the
+        # identity check covers both spellings once resolved.
+        if ann is WorkerContext:
+            return name
+        if isinstance(ann, str):
+            tail = ann.rsplit(".", 1)[-1].strip().strip("\"'")
+            if tail in ("Ctx", "WorkerContext"):
+                return name
+    return None
+
+
 # The "currently open session" — set by Session.__enter__ /
 # WorkerSession.__init__ (via worker.py) / LocalSession.__enter__.
 # Held here rather than in session.py to avoid an import cycle.
-_current_session: contextvars.ContextVar["SubmittableSession | None"] = (
-    contextvars.ContextVar("_current_session", default=None)
+_current_session: contextvars.ContextVar["SubmittableSession | None"] = contextvars.ContextVar(
+    "_current_session", default=None
 )
 
 
@@ -58,7 +92,7 @@ def current_session() -> SubmittableSession:
 class Task(Generic[P, R]):
     """A function wrapped for ArmoniK submission."""
 
-    __slots__ = ("func", "name", "opts", "multi_fields")
+    __slots__ = ("func", "name", "opts", "multi_fields", "ctx_param")
 
     def __init__(
         self,
@@ -75,6 +109,11 @@ class Task(Generic[P, R]):
         # single-output tasks. Set by the @task decorator via AST
         # introspection (or via ``@task(outputs=(...))``).
         self.multi_fields = multi_fields
+        # Name of the ``pymonik.Ctx``-annotated parameter, if any — the
+        # worker injects the live WorkerContext under it at dispatch.
+        # Detected here (from the real function) so it survives
+        # ``with_options`` re-wrapping without threading.
+        self.ctx_param = _detect_ctx_param(func)
 
     # Local call — just runs the function.
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
@@ -228,9 +267,7 @@ class Task(Generic[P, R]):
         fn = functools.partial(session._submit_many, self, items)
         return await anyio.to_thread.run_sync(fn)
 
-    async def starmap_async(
-        self, args_iter: Iterable[tuple[Any, ...]]
-    ) -> FutureList[R]:
+    async def starmap_async(self, args_iter: Iterable[tuple[Any, ...]]) -> FutureList[R]:
         """Async sibling of :meth:`starmap`."""
         session = current_session()
         items = list(args_iter)
@@ -242,6 +279,7 @@ class Task(Generic[P, R]):
 
 
 # --- decorator ---
+
 
 @overload
 def task(func: Callable[P, R], /) -> Task[P, R]: ...
