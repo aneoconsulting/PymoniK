@@ -56,23 +56,24 @@ def main() -> None:
     with PymonikClient() as client:
         with client.session(partition=args.partition) as s:
             # 1) Filtered retries actually retry until success.
+            # outcome() settles without raising — branch on .ok / .error / .value.
             t0 = time.monotonic()
             label = f"run-{int(time.time())}"
-            try:
-                result = flaky_with_filter.spawn(label).result(timeout=120)
-                print(f"flaky_with_filter: {result}  ({time.monotonic() - t0:.1f}s)")
-            except Exception as e:
-                print(f"flaky_with_filter: exhausted -> {e}")
+            oc = flaky_with_filter.spawn(label).outcome(timeout=120)
+            if oc.ok:
+                print(f"flaky_with_filter: {oc.value}  ({time.monotonic() - t0:.1f}s)")
+            else:
+                print(f"flaky_with_filter: exhausted -> {oc.error}")
 
-            # 2) Unmatched exception type — no retry, raises immediately.
+            # 2) Unmatched exception type — no retry, surfaces immediately.
             t0 = time.monotonic()
-            try:
-                fails_with_unmatched_type.spawn("immediate").result(timeout=60)
+            oc = fails_with_unmatched_type.spawn("immediate").outcome(timeout=60)
+            if oc.ok:
                 print("UNEXPECTED success on fails_with_unmatched_type")
-            except TaskFailed as e:
+            else:
                 print(
                     f"fails_with_unmatched_type: surfaced after "
-                    f"{time.monotonic() - t0:.1f}s as expected; head={str(e)[:80]}…"
+                    f"{time.monotonic() - t0:.1f}s as expected; head={str(oc.error)[:80]}…"
                 )
 
 

@@ -81,12 +81,12 @@ def test_results_list_materializes_all():
         assert all(f._materialized for f in parts)
 
 
-def test_wait_does_not_materialize():
+def test_outcome_does_not_materialize():
     with LocalCluster() as c, c.session():
         f = inc.spawn(41)
-        f.wait(timeout=10)
-        assert f.done and not f._materialized
-        assert f.result(timeout=10) == 42
+        oc = f.outcome(timeout=10)
+        assert f.done and not f._materialized  # settled on status, no download
+        assert oc.value == 42  # .value materializes lazily on access
         assert f._materialized
 
 

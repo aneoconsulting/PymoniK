@@ -25,8 +25,8 @@ import argparse
 import threading
 import time
 
-from pymonik import PymonikClient, TaskCancelled, current, task
 import pymonik
+from pymonik import PymonikClient, current, task
 
 
 @task
@@ -60,11 +60,13 @@ def main() -> None:
 
             threading.Thread(target=cancel_after, args=(2.0,), daemon=True).start()
             t0 = time.monotonic()
-            try:
-                fut.result(timeout=30)
+            # outcome() settles without raising — a cancelled task is just
+            # `not oc.ok` with a TaskCancelled in oc.error.
+            oc = fut.outcome(timeout=30)
+            if oc.ok:
                 print("  UNEXPECTED success")
-            except TaskCancelled as e:
-                print(f"  cancelled as expected after {time.monotonic() - t0:.2f}s: {e}")
+            else:
+                print(f"  cancelled as expected after {time.monotonic() - t0:.2f}s: {oc.error}")
 
             # ---- 2. cancel the whole session ----
             print("test 2: session.cancel()")
@@ -78,12 +80,8 @@ def main() -> None:
             threading.Thread(target=cancel_session_after, args=(1.0,), daemon=True).start()
 
             t0 = time.monotonic()
-            cancelled = 0
-            for f in futs:
-                try:
-                    f.result(timeout=30)
-                except TaskCancelled:
-                    cancelled += 1
+            # Settle each without raising and count the ones that didn't succeed.
+            cancelled = sum(1 for f in futs if not f.outcome(timeout=30).ok)
             print(f"  {cancelled}/{len(futs)} cancelled after {time.monotonic() - t0:.2f}s")
 
 

@@ -29,7 +29,7 @@ from pymonik import (
     TaskFailed,
     as_completed,
     current,
-    gather_sync,
+    gather,
     task,
 )
 from pymonik.testing import LocalCluster
@@ -81,8 +81,9 @@ def sync_demo() -> None:
             assert total == 64, total
             print(f"  sum DAG     -> {total}")
 
-            # 3) gather over a fan-out
-            squares = gather_sync(*[slow_square.spawn(i) for i in range(6)])
+            # 3) gather over a fan-out — gather returns a FutureList, so the
+            # sync values door is .results() (same as Task.map).
+            squares = gather(*[slow_square.spawn(i) for i in range(6)]).results()
             print(f"  squares     -> {squares}")
 
             # 4) retries — `current().attempt` reflects the retry attempt

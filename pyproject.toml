@@ -1,11 +1,15 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "uv-dynamic-versioning"]
 build-backend = "hatchling.build"
 
 [project]
 description = "Python framework for writing distributed programs that run on an ArmoniK cluster."
 name = "pymonik"
-version = "1.0.0a0"
+# Version is derived from git tags by uv-dynamic-versioning (see
+# [tool.uv-dynamic-versioning]) — there is no hand-maintained version
+# string. Tag a release (e.g. `v1.0.0`) to cut it; in between, builds get a
+# `.postN.devM+<hash>` suffix off the latest tag.
+dynamic = ["version"]
 readme = "README.md"
 requires-python = "==3.11.*" # must match the worker image python
 dependencies = [
@@ -49,6 +53,16 @@ pymonik-worker = "pymonik.worker:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pymonik"]
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+# Accept both the bare (`0.1.5`) and `v`-prefixed (`v0.2.0`) tag styles
+# already in this repo. On a tag, the version IS the tag (e.g. `1.0.0rc1`);
+# past a tag it becomes `<tag>.postN.devM+<hash>`.
 
 [dependency-groups]
 dev = [

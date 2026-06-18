@@ -40,20 +40,26 @@ from pymonik.blob import Blob, Materialize
 from pymonik.client import PymonikClient
 from pymonik.composition import (
     as_completed,
-    as_completed_sync,
     gather,
-    gather_sync,
 )
 from pymonik.context import Ctx, WorkerContext, current
 from pymonik.errors import (
     ConnectionError as PymonikConnectionError,
+)
+from pymonik.errors import (
     NotInSessionError,
     PymonikError,
     TaskCancelled,
     TaskFailed,
     TaskTimeout,
 )
-from pymonik.future import Future, FutureList, MultiResultHandle, MultiResultView
+from pymonik.future import (
+    Future,
+    FutureList,
+    MultiResultHandle,
+    MultiResultView,
+    Outcome,
+)
 from pymonik.multiresult import MultiResult, TailPromise
 from pymonik.options import TaskOpts
 from pymonik.task import Task, task
@@ -68,11 +74,10 @@ __all__ = [
     "MultiResult",
     "MultiResultHandle",
     "MultiResultView",
+    "Outcome",
     "TailPromise",
     "gather",
-    "gather_sync",
     "as_completed",
-    "as_completed_sync",
     "current",
     "WorkerContext",
     "Ctx",
@@ -99,6 +104,16 @@ __all__ = [
     "TaskTimeout",
     "NotInSessionError",
     "PymonikConnectionError",
+    "__version__",
 ]
 
-__version__ = "2.0.0a3"
+# Single source of truth: the installed package metadata, which
+# uv-dynamic-versioning computes from git tags at build time. No
+# hand-maintained string here (that's what used to drift from pyproject).
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("pymonik")
+    del _pkg_version
+except Exception:  # not installed (e.g. imported from a raw checkout)
+    __version__ = "0.0.0+unknown"

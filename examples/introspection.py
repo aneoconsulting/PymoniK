@@ -69,7 +69,7 @@ def main() -> None:
         with client.session(partition=args.partition) as s:
             print(f"\n== running 4 tasks in session {s.session_id[:8]}… ==")
             futs = add.map(range(4), range(1, 5))
-            results = [f.result(timeout=60) for f in futs]
+            results = futs.results(timeout=60)
             print(f"  results: {results}")
 
             # ---- session-scoped reads ----

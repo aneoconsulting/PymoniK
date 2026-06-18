@@ -179,9 +179,11 @@ Other typed exceptions in `pymonik`:
 - `NotInSessionError` — you called `.spawn()` outside a session block.
 - `PymonikError` — base class; everything above derives from it.
 
-Catch them with `try/except`, or `try/except*` if you're using
-`gather()` / `as_completed()` and want to fan in error groups (see
-[Async](guides/async.md)).
+Catch them with `try/except`. To **settle without raising** — branch on
+success/failure rather than catch — use `fut.outcome()` for one task, or
+`FutureList.outcomes()` for many (`gather(...)` returns a `FutureList`, so
+`gather(...).outcomes()` works too). Each gives you an `Outcome` with `.ok`,
+`.error`, and a lazily-downloaded `.value` (see [Async](guides/async.md)).
 
 ## Per-task options
 

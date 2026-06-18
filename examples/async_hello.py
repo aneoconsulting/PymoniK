@@ -12,8 +12,8 @@ import argparse
 import asyncio
 import time
 
-from pymonik import PymonikClient, task
 import pymonik
+from pymonik import PymonikClient, gather, task
 
 
 @task
@@ -34,20 +34,20 @@ def sum_all(xs: list[int]) -> int:
 async def main(partition: str) -> None:
     pymonik.enable_logging()
     t0 = time.monotonic()
-    async with PymonikClient() as client:
-        async with client.session_async(partition=partition) as s:
-            # Composition: spawn is sync, await is async. Submission returns
-            # immediately; ArmoniK holds `doubled` and `total` in PENDING
-            # via data_dependencies until their inputs complete.
-            seed = add.spawn(2, 3)
-            doubled = double.spawn(seed)          # depends on seed
-            leaves = add.map(range(8), range(1, 9))
-            total = sum_all.spawn(leaves)         # depends on all leaves
+    async with PymonikClient() as client, client.session(partition=partition) as s:
+        # Composition: spawn is sync, await is async. Submission returns
+        # immediately; ArmoniK holds `doubled` and `total` in PENDING
+        # via data_dependencies until their inputs complete.
+        seed = add.spawn(2, 3)
+        doubled = double.spawn(seed)  # depends on seed
+        leaves = add.map(range(8), range(1, 9))
+        total = sum_all.spawn(leaves)  # depends on all leaves
 
-            # Await two separate DAG terminals concurrently via asyncio.gather.
-            a, b = await asyncio.gather(doubled, total)
-            print(f"doubled(2+3) = {a}")
-            print(f"sum(1,3,5,...,15) = {b}")
+        # Await two separate DAG terminals concurrently. `gather` returns a
+        # handle; `await` is the async retriever (`.result()` the sync one).
+        a, b = await gather(doubled, total)
+        print(f"doubled(2+3) = {a}")
+        print(f"sum(1,3,5,...,15) = {b}")
 
     print(f"took {time.monotonic() - t0:.1f}s")
 

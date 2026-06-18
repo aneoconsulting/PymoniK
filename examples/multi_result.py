@@ -17,7 +17,7 @@ This script demonstrates:
    the whole-task ``.result()`` returning a ``MultiResultView``.
 2. Per-field downstream dependency.
 3. Per-field tail-call: one slot produced by a delegated child task.
-4. Collective ``.wait()`` / ``.done``.
+4. Collective ``.outcome()`` (settle without raising) / ``.done``.
 
     uv run python examples/multi_result.py --partition <pymonik-partition>
 """
@@ -116,10 +116,10 @@ def main() -> None:
                 f"({time.monotonic() - t0:.1f}s)"
             )
 
-            # ---- 4. Collective wait / done ----
+            # ---- 4. Collective settle / done ----
             handle = stats.spawn([5, 10])
-            handle.wait()
-            print(f"all done? {handle.done} -> {dict(handle.result())}")
+            oc = handle.outcome()  # block on all fields, never raises
+            print(f"all done? {handle.done}  ok? {oc.ok} -> {dict(handle.result())}")
 
 
 if __name__ == "__main__":

@@ -30,25 +30,24 @@ def slow_double(x: int) -> int:
 
 async def main(partition: str, n: int) -> None:
     pymonik.enable_logging()
-    async with PymonikClient() as client:
-        async with client.session_async(partition=partition) as s:
-            # ---- gather() ----
-            print(f"submitting {n} tasks for gather()")
-            t0 = time.monotonic()
-            futs = slow_double.map(range(n))
-            results = await gather(futs)  # results in submission order
-            print(f"  gather -> {results}  ({time.monotonic() - t0:.1f}s)")
+    async with PymonikClient() as client, client.session_async(partition=partition) as s:
+        # ---- gather() ----
+        print(f"submitting {n} tasks for gather()")
+        t0 = time.monotonic()
+        futs = slow_double.map(range(n))
+        results = await gather(futs)  # results in submission order
+        print(f"  gather -> {results}  ({time.monotonic() - t0:.1f}s)")
 
-            # ---- as_completed() ----
-            print(f"submitting {n} more for as_completed()")
-            t0 = time.monotonic()
-            futs2 = slow_double.map(range(100, 100 + n))
-            received: list[int] = []
-            async for done in as_completed(futs2):
-                value = await done   # the typed Future is yielded back
-                received.append(value)
-                print(f"  +{value:>3}  (running for {time.monotonic() - t0:.2f}s)")
-            print(f"  total {sum(received)}  ({time.monotonic() - t0:.1f}s)")
+        # ---- as_completed() ----
+        print(f"submitting {n} more for as_completed()")
+        t0 = time.monotonic()
+        futs2 = slow_double.map(range(100, 100 + n))
+        received: list[int] = []
+        async for done in as_completed(futs2):
+            value = await done  # the typed Future is yielded back
+            received.append(value)
+            print(f"  +{value:>3}  (running for {time.monotonic() - t0:.2f}s)")
+        print(f"  total {sum(received)}  ({time.monotonic() - t0:.1f}s)")
 
 
 if __name__ == "__main__":

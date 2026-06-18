@@ -68,7 +68,7 @@ def main() -> None:
 
             t0 = time.monotonic()
             futures = expensive_pure.map(inputs)
-            results = [f.result() for f in futures]
+            results = futures.results()
             print(f"  expensive map        -> {results}  ({time.monotonic() - t0:.2f}s)")
 
             # Same inputs again — should be all hits.

@@ -44,11 +44,10 @@ def main() -> None:
     args = ap.parse_args()
 
     t0 = time.monotonic()
-    with PymonikClient() as client:
-        with client.session(partition=args.partition) as s:
-            shards = estimate_pi_partial.map([args.samples] * args.n)
-            pi = reduce_pi.spawn(shards).result(timeout=300)
-    print(f"pi ≈ {pi:.6f}  ({args.n * args.samples} samples, {time.monotonic()-t0:.1f}s)")
+    with PymonikClient() as client, client.session(partition=args.partition) as s:
+        shards = estimate_pi_partial.map([args.samples] * args.n)
+        pi = reduce_pi.spawn(shards).result(timeout=300)
+    print(f"pi ≈ {pi:.6f}  ({args.n * args.samples} samples, {time.monotonic() - t0:.1f}s)")
 
 
 if __name__ == "__main__":

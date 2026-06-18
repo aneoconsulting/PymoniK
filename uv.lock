@@ -1040,7 +1040,6 @@ wheels = [
 
 [[package]]
 name = "pymonik"
-version = "1.0.0a0"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
@@ -1109,7 +1108,7 @@ requires-dist = [
     { name = "setuptools", specifier = "<81" },
     { name = "structlog", specifier = ">=24.1" },
 ]
-provides-extras = ["otel", "marimo", "mcp"]
+provides-extras = ["marimo", "mcp", "otel"]
 
 [package.metadata.requires-dev]
 dev = [

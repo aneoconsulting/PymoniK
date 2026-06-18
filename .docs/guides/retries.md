@@ -21,7 +21,9 @@ def flaky(x: int) -> int:
 ArmoniK retries up to 3 times. The task is identified by a fresh
 `task_id` per attempt; from the client's perspective, the
 `Future.result()` either delivers the eventual success or surfaces
-the final failure as `TaskFailed`.
+the final failure as `TaskFailed`. (To branch on the final outcome
+without a `try/except`, use `fut.outcome()` — it returns an `Outcome`
+with `.ok` / `.error` / `.value` and never raises on task failure.)
 
 Use this when you don't care *why* a task failed and a re-attempt is
 likely to work — transient network errors, temporary resource

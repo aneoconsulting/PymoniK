@@ -15,7 +15,10 @@ registered an ``asyncio.Event`` on this future, wake it via
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
+import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import anyio
@@ -23,7 +26,7 @@ import cloudpickle
 
 import pymonik.hooks as hooks
 from pymonik._internal import _otel
-from pymonik.errors import PymonikError, TaskFailed, TaskTimeout
+from pymonik.errors import PymonikError, TaskCancelled, TaskFailed, TaskTimeout
 
 _WORKER_STUB_BLOCK_MSG = (
     "cannot .result() / await a Future from inside a @task — ArmoniK tasks "
@@ -37,6 +40,70 @@ if TYPE_CHECKING:
     from pymonik.session import Session
 
 T = TypeVar("T")
+
+
+def _ensure_off_loop(op: str) -> None:
+    """Raise if a *blocking* door is used from inside a running event loop.
+
+    ``.result()`` / ``.outcome()`` / ``.results()`` block the calling thread;
+    called from async code they would stall the loop. We detect a running
+    loop in *this* thread (the sync facade's portal loop runs on another
+    thread, so sync user code never trips this) and point at the async door
+    instead of letting it deadlock-by-degrees.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise PymonikError(
+        f"{op} blocks the calling thread but was called from inside a running "
+        f"event loop. Use the async door instead — `await fut` / `await fl` / "
+        f"`await gather(...)` for values, or `try`/`except` around `await fut` "
+        f"to settle without raising."
+    )
+
+
+class Outcome(Generic[T]):
+    """A task's *settled* result: success or failure, value materialised lazily.
+
+    Returned by :meth:`Future.outcome` and :meth:`FutureList.outcomes` (and so
+    by ``gather(...).outcomes()``, since ``gather`` returns a ``FutureList``).
+    It never raises on a failed task — you branch on ``.ok`` and read
+    ``.error`` or ``.value``::
+
+        oc = fut.outcome()
+        print(oc.value if oc.ok else oc.error)
+    """
+
+    __slots__ = ("ok", "error", "_materialize")
+
+    def __init__(
+        self,
+        *,
+        ok: bool,
+        error: PymonikError | None,
+        materialize: Callable[[], T],
+    ) -> None:
+        self.ok = ok
+        self.error = error
+        self._materialize = materialize
+
+    @property
+    def value(self) -> T:
+        """The result value (downloaded on first access). Raises if not ``ok``."""
+        if not self.ok:
+            assert self.error is not None  # ok is False ⇒ error is set
+            raise self.error
+        return self._materialize()
+
+    def unwrap(self) -> T:
+        """Alias for :attr:`value`."""
+        return self.value
+
+    def __repr__(self) -> str:
+        if self.ok:
+            return "<Outcome ok>"
+        return f"<Outcome failed: {type(self.error).__name__}>"
 
 
 class Future(Generic[T]):
@@ -78,7 +145,7 @@ class Future(Generic[T]):
         "_materialize_lock",
     )
 
-    def __init__(self, session: "Session", task_id: str, result_id: str) -> None:
+    def __init__(self, session: Session, task_id: str, result_id: str) -> None:
         self._session = session
         self._task_id = task_id
         self._result_id = result_id
@@ -200,7 +267,7 @@ class Future(Generic[T]):
         # Retry path: if a matching policy is configured and budget remains,
         # suppress this error, trigger re-submission, and leave _done unset.
         rs = self._retry_state
-        if rs is not None:
+        if rs is not None and err is not TaskCancelled:
             _task, _args, _kwargs, max_retries, on_types, _backoff = rs
             if isinstance(err, on_types) and self._retry_attempt < max_retries:
                 self._retry_attempt += 1
@@ -221,6 +288,7 @@ class Future(Generic[T]):
         if hooks.active():
             sid = getattr(self._session, "session_id", None)
             if sid is not None:
+                # NOTE(behavior): Do we want a TaskCancelled hook or is TaskCancelled => TaskCompleted/TaskFailed (for now it's TaskFailed.)
                 hooks.emit(
                     hooks.TaskFailed,
                     session_id=sid,
@@ -234,16 +302,24 @@ class Future(Generic[T]):
         """Called from the completion thread; wake any async awaiter."""
         if self._aio_done is None or self._aio_loop is None:
             return
-        try:
-            # call_soon_threadsafe is the one asyncio primitive that is safe
-            # to call from another thread — it schedules .set() on the loop.
+        # call_soon_threadsafe is the one asyncio primitive that is safe to
+        # call from another thread — it schedules .set() on the loop. A
+        # RuntimeError means the loop closed before resolution landed; sync
+        # waiters are unaffected, so suppress it.
+        with contextlib.suppress(RuntimeError):
             self._aio_loop.call_soon_threadsafe(self._aio_done.set)
-        except RuntimeError:
-            # Loop has closed before resolution landed; sync waiters unaffected.
-            pass
 
-    # ---- public sync wait ----
+    # ---- public sync door: the value (raises on failure) ----
     def result(self, timeout: float | None = None) -> T:
+        """Block until resolved, then return the value (raising on failure).
+
+        Sync only — from inside a running event loop this raises; use
+        ``await fut`` there instead.
+        """
+        _ensure_off_loop("Future.result()")
+        return self._result(timeout)
+
+    def _result(self, timeout: float | None = None) -> T:
         if self._is_worker_stub:
             raise PymonikError(_WORKER_STUB_BLOCK_MSG)
         with _otel.start_span(
@@ -258,29 +334,34 @@ class Future(Generic[T]):
                 raise self._error
             return self._materialize()
 
-    # ---- public sync wait (no value, no error raise) ----
-    def wait(self, timeout: float | None = None) -> "Future[T]":
-        """Block until this future is resolved (success or failure). Return self.
+    # ---- public sync door: settle without raising the task error ----
+    # TODO: We don't have an equivalent for settling without materializing the result in async
+    def outcome(self, timeout: float | None = None) -> Outcome[T]:
+        """Block until resolved and return an :class:`Outcome`.
 
-        Unlike :meth:`result`, this does not raise on task failure /
-        cancellation and does not deliver the value. Use it when you
-        want to synchronise without surfacing the value or its errors —
-        either because you don't need the value yet, or because you
-        plan to inspect ``.done`` and the future's state explicitly.
+        Never raises on task failure (only :class:`pymonik.TaskTimeout` if
+        the timeout elapses). The outcome carries ``.ok`` / ``.error``
+        immediately and materialises ``.value`` lazily on first access, so
+        you can settle without a ``try``::
 
-        Chains naturally with :meth:`result` for a two-step access:
+            oc = fut.outcome()
+            if oc.ok:
+                use(oc.value)
+            else:
+                log.warning("task failed", error=oc.error)
 
-            value = fut.wait(timeout=60).result()
-
-        Raises :class:`pymonik.TaskTimeout` if the timeout elapses
-        without resolution.
+        Sync only — the async equivalent is ``try``/``except`` around
+        ``await fut``.
         """
+        _ensure_off_loop("Future.outcome()")
+        return self._settle(timeout)
+
+    def _settle(self, timeout: float | None = None) -> Outcome[T]:
         if self._is_worker_stub:
             raise PymonikError(_WORKER_STUB_BLOCK_MSG)
-        got = self._done.wait(timeout=timeout)
-        if not got:
+        if not self._done.wait(timeout=timeout):
             raise TaskTimeout(self._task_id)
-        return self
+        return Outcome(ok=self._error is None, error=self._error, materialize=self._materialize)
 
     # ---- public async wait ----
     async def _await(self, timeout: float | None = None) -> T:
@@ -300,7 +381,7 @@ class Future(Generic[T]):
                 await self._aio_done.wait()
             else:
                 await asyncio.wait_for(self._aio_done.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TaskTimeout(self._task_id) from None
 
         if self._error is not None:
@@ -308,28 +389,6 @@ class Future(Generic[T]):
         # Download + unpickle off the event loop — materialisation is
         # blocking I/O and must not stall the loop.
         return await anyio.to_thread.run_sync(self._materialize)
-
-    async def wait_async(self, timeout: float | None = None) -> "Future[T]":
-        """Async sibling of :meth:`wait`. Block until resolved; return self.
-
-        Does not surface the value or raise on task failure — same
-        rationale as :meth:`wait`.
-        """
-        if self._is_worker_stub:
-            raise PymonikError(_WORKER_STUB_BLOCK_MSG)
-        if self._aio_done is None:
-            self._aio_loop = asyncio.get_running_loop()
-            self._aio_done = asyncio.Event()
-            if self._done.is_set():
-                self._aio_done.set()
-        try:
-            if timeout is None:
-                await self._aio_done.wait()
-            else:
-                await asyncio.wait_for(self._aio_done.wait(), timeout=timeout)
-        except asyncio.TimeoutError:
-            raise TaskTimeout(self._task_id) from None
-        return self
 
     # ---- internal construction ----
     @classmethod
@@ -339,7 +398,7 @@ class Future(Generic[T]):
         result_id: str,
         cache_key: str,
         owner_task_id: str | None = None,
-    ) -> "Future[Any]":
+    ) -> Future[Any]:
         """Build a future bound to an existing cluster ``result_id``.
 
         Used on a cache hit: the task isn't resubmitted. The future is
@@ -374,7 +433,7 @@ class Future(Generic[T]):
 
     # ---- internal construction (cache hit) ----
     @classmethod
-    def _new_cached(cls, session: Any, cached_bytes: bytes) -> "Future[Any]":
+    def _new_cached(cls, session: Any, cached_bytes: bytes) -> Future[Any]:
         """Build a Future that's already resolved with ``cached_bytes``.
 
         The caller (Session / LocalSession) uses this when the local
@@ -409,7 +468,7 @@ class Future(Generic[T]):
         session: Any,
         task_id: str,
         result_id: str,
-    ) -> "Future[Any]":
+    ) -> Future[Any]:
         """Build a Future for a task spawned *inside* a worker.
 
         No poller exists worker-side, so these futures cannot be awaited.
@@ -494,28 +553,52 @@ class FutureList(Generic[T]):
         return len(self._futures)
 
     def results(self, timeout: float | None = None) -> list[T]:
-        """Sync: block until every future resolves; return them in submission order."""
-        return [f.result(timeout=timeout) for f in self._futures]
+        """Sync: block until every future resolves; values in submission order.
 
-    async def results_async(self, timeout: float | None = None) -> list[T]:
-        """Async: await every future concurrently; return them in submission order."""
-        return await asyncio.gather(*(f._await(timeout) for f in self._futures))
-
-    def wait(self, timeout: float | None = None) -> "FutureList[T]":
-        """Block until every future is resolved; return self.
-
-        Doesn't surface values or raise on task failures — see
-        :meth:`Future.wait`. Apply the timeout per future, same as
-        :meth:`results`.
+        ``timeout`` is a single wall-clock deadline across the whole batch
+        (not per-future). Sync only — use ``await fl`` from async code.
         """
+        _ensure_off_loop("FutureList.results()")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        out: list[T] = []
         for f in self._futures:
-            f.wait(timeout=timeout)
-        return self
+            t = None if deadline is None else max(0.0, deadline - time.monotonic())
+            out.append(f._result(t))
+        return out
 
-    async def wait_async(self, timeout: float | None = None) -> "FutureList[T]":
-        """Async sibling of :meth:`wait`."""
-        await asyncio.gather(*(f.wait_async(timeout) for f in self._futures))
-        return self
+    def outcomes(self, timeout: float | None = None) -> list[Outcome[T]]:
+        """Sync: settle every future; one :class:`Outcome` each, in order.
+
+        Never raises on task failure — the don't-raise batch door. Single
+        wall-clock deadline across the batch. Sync only; in async, settle
+        per-future with ``try``/``except`` around ``await fut`` (or iterate
+        ``as_completed``).
+        """
+        _ensure_off_loop("FutureList.outcomes()")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        out: list[Outcome[T]] = []
+        for f in self._futures:
+            t = None if deadline is None else max(0.0, deadline - time.monotonic())
+            out.append(f._settle(t))
+        return out
+
+    async def _gather(self) -> list[T]:
+        return await asyncio.gather(*(f._await() for f in self._futures))
+
+    def __await__(self):
+        """``await fl`` → list of values, in submission order (async door)."""
+        return self._gather().__await__()
+
+    @property
+    def done(self) -> bool:
+        """True once every future in the batch has resolved."""
+        return all(f.done for f in self._futures)
+
+    def cancel(self) -> None:
+        """Cancel every not-yet-resolved future in the batch."""
+        for f in self._futures:
+            if not f.done:
+                f.cancel()
 
     def __repr__(self) -> str:
         done = sum(1 for f in self._futures if f.done)
@@ -570,7 +653,7 @@ class MultiResultView:
             raise AttributeError(
                 f"{name!r} is not a field of this MultiResult "
                 f"(available: {list(object.__getattribute__(self, '_data'))})"
-            )
+            ) from None
 
     def __getitem__(self, key: str) -> Any:
         return self._data[key]
@@ -645,9 +728,8 @@ class MultiResultHandle:
         except KeyError:
             fields = ", ".join(object.__getattribute__(self, "_field_to_future"))
             raise AttributeError(
-                f"{name!r} is not a field of this MultiResultHandle "
-                f"(available: {fields})"
-            )
+                f"{name!r} is not a field of this MultiResultHandle (available: {fields})"
+            ) from None
 
     def __getitem__(self, name: str) -> Future[Any]:
         return self._field_to_future[name]
@@ -660,34 +742,44 @@ class MultiResultHandle:
 
         The view supports attribute access (``view.double``) and
         dict-style access (``view["double"]``); compares equal to a
-        plain ``dict`` of the same values.
+        plain ``dict`` of the same values. Single wall-clock deadline
+        across all fields. Sync only — use ``await handle`` from async code.
         """
-        return MultiResultView(
-            {f: fut.result(timeout=timeout) for f, fut in self._field_to_future.items()}
-        )
+        _ensure_off_loop("MultiResultHandle.result()")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        view: dict[str, Any] = {}
+        for field, fut in self._field_to_future.items():
+            t = None if deadline is None else max(0.0, deadline - time.monotonic())
+            view[field] = fut._result(t)
+        return MultiResultView(view)
 
-    def wait(self, timeout: float | None = None) -> "MultiResultHandle":
-        """Block until every field is resolved; return self.
+    def outcome(self, timeout: float | None = None) -> Outcome[MultiResultView]:
+        """Settle every field; return one :class:`Outcome` for the whole task.
 
-        Doesn't surface values or raise on task failures — see
-        :meth:`Future.wait`.
+        ``.ok`` is true only if every field succeeded; ``.error`` is the
+        first field error; ``.value`` lazily builds the
+        :class:`MultiResultView`. Never raises on task failure.
         """
+        _ensure_off_loop("MultiResultHandle.outcome()")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        settled: list[Outcome[Any]] = []
         for fut in self._field_to_future.values():
-            fut.wait(timeout=timeout)
-        return self
+            t = None if deadline is None else max(0.0, deadline - time.monotonic())
+            settled.append(fut._settle(t))
+        err = next((s.error for s in settled if not s.ok), None)
+
+        def _view() -> MultiResultView:
+            return MultiResultView(
+                {f: fut._materialize() for f, fut in self._field_to_future.items()}
+            )
+
+        return Outcome(ok=err is None, error=err, materialize=_view)
 
     async def _await(self, timeout: float | None = None) -> MultiResultView:
         results = await asyncio.gather(
             *(fut._await(timeout) for fut in self._field_to_future.values())
         )
-        return MultiResultView(dict(zip(self._field_to_future.keys(), results)))
-
-    async def wait_async(self, timeout: float | None = None) -> "MultiResultHandle":
-        """Async sibling of :meth:`wait`."""
-        await asyncio.gather(
-            *(fut.wait_async(timeout) for fut in self._field_to_future.values())
-        )
-        return self
+        return MultiResultView(dict(zip(self._field_to_future.keys(), results, strict=True)))
 
     def __await__(self):
         return self._await().__await__()
