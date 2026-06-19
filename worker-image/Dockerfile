@@ -30,6 +30,14 @@ USER armonikuser
 COPY --chown=armonikuser:armonikuser pyproject.toml README.md ./
 COPY --chown=armonikuser:armonikuser src/ ./src/
 
+# uv-dynamic-versioning derives the version from git tags, but the build
+# context carries no .git and this base image has no git binary. Bypass
+# version detection with an explicit string. Stamp a real version at build
+# time with `--build-arg PYMONIK_VERSION=$(git describe --tags --always)`;
+# the default keeps the image importable when the tag doesn't matter.
+ARG PYMONIK_VERSION=0.0.0
+ENV UV_DYNAMIC_VERSIONING_BYPASS=${PYMONIK_VERSION}
+
 RUN uv venv /app/.venv \
  && uv pip install --no-cache '.[otel]'
 
