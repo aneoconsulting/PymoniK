@@ -267,7 +267,7 @@ class Future(Generic[T]):
         # Retry path: if a matching policy is configured and budget remains,
         # suppress this error, trigger re-submission, and leave _done unset.
         rs = self._retry_state
-        if rs is not None and err is not TaskCancelled:
+        if rs is not None and not isinstance(err, TaskCancelled):
             _task, _args, _kwargs, max_retries, on_types, _backoff = rs
             if isinstance(err, on_types) and self._retry_attempt < max_retries:
                 self._retry_attempt += 1

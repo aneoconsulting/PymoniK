@@ -17,11 +17,11 @@ one level (matching their iter protocol).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Iterable, Iterator
 import time
+from collections.abc import AsyncIterator, Iterable, Iterator
 from typing import Any
 
-from pymonik.errors import PymonikError
+from pymonik.errors import TaskTimeout
 from pymonik.future import Future, FutureList, _ensure_off_loop
 
 # Brief poll interval for sync as_completed when no future has resolved yet.
@@ -80,10 +80,18 @@ class AsCompleted:
         self._futures = futures
         self._timeout = timeout
 
+    def _timeout_error(self, unresolved: int) -> TaskTimeout:
+        return TaskTimeout(
+            message=(
+                f"as_completed timed out after {self._timeout}s with "
+                f"{unresolved} of {len(self._futures)} futures unresolved"
+            )
+        )
+
     def __iter__(self) -> Iterator[Future[Any]]:
         _ensure_off_loop("for ... in as_completed(...)")
         pending = list(self._futures)
-        deadline = None if not self._timeout else time.monotonic() + self._timeout()
+        deadline = None if self._timeout is None else time.monotonic() + self._timeout
         while pending:
             for i, f in enumerate(pending):
                 if f.done:
@@ -95,7 +103,7 @@ class AsCompleted:
                 else:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise PymonikError()  # TODO: I should probably swap to TaskTimeout but for now this is good enough.
+                        raise self._timeout_error(len(pending))
                     wait_for = min(_AS_COMPLETED_POLL_S, remaining)
                 # None done yet; block on the first pending future for up to
                 # the poll interval — whoever completes first wakes us.
@@ -107,12 +115,22 @@ class AsCompleted:
     async def _aiter_impl(self) -> AsyncIterator[Future[Any]]:
         if not self._futures:
             return
+        deadline = None if self._timeout is None else time.monotonic() + self._timeout
         pending: dict[asyncio.Task[Any], Future[Any]] = {
             asyncio.create_task(f._await()): f for f in self._futures
         }
         try:
             while pending:
-                done, _ = await asyncio.wait(pending.keys(), return_when=asyncio.FIRST_COMPLETED)
+                # The deadline spans the whole iteration (matching the sync
+                # door and concurrent.futures.as_completed), so each wait gets
+                # the *remaining* time, not the full timeout. Clamped to 0 so
+                # already-resolved futures still yield at the deadline.
+                remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+                done, _ = await asyncio.wait(
+                    pending.keys(), timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+                )
+                if not done:
+                    raise self._timeout_error(len(pending))
                 for d in done:
                     fut = pending.pop(d)
                     # Drain the task's exception so asyncio doesn't warn — the
@@ -121,7 +139,7 @@ class AsCompleted:
                         pass
                     yield fut
         finally:
-            for t in pending:  # caller broke out early — cancel the rest
+            for t in pending:  # caller broke out early or timed out — cancel the rest
                 t.cancel()
 
 
@@ -140,6 +158,9 @@ def as_completed(*futures: Any, timeout: float | None = None) -> AsCompleted:
     """Iterate a batch's futures in completion order (sync or async).
 
     Returns an object usable with both ``for`` and ``async for``; each yielded
-    item is a resolved :class:`pymonik.Future`.
+    item is a resolved :class:`pymonik.Future`. ``timeout`` is the overall
+    deadline in seconds for the whole iteration (like
+    ``concurrent.futures.as_completed``); if it expires with futures still
+    unresolved, :class:`pymonik.TaskTimeout` is raised.
     """
     return AsCompleted(_flatten(futures), timeout)

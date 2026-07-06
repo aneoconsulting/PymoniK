@@ -36,8 +36,13 @@ class TaskCancelled(PymonikError):
 
 
 class TaskTimeout(PymonikError):
-    """Task exceeded its max_duration."""
+    """A wait deadline expired before resolution.
 
-    def __init__(self, task_id: str) -> None:
-        super().__init__(f"task {task_id} timed out")
+    Carries the ``task_id`` when a single future's wait timed out; batch-level
+    waits (``as_completed(..., timeout=...)``) pass a ``message`` instead and
+    leave ``task_id`` as ``None``.
+    """
+
+    def __init__(self, task_id: str | None = None, *, message: str | None = None) -> None:
+        super().__init__(message or f"task {task_id} timed out")
         self.task_id = task_id

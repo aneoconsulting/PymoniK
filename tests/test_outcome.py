@@ -77,8 +77,8 @@ def test_outcome_failed_never_raises():
             _ = oc.value
 
 
-def test_outcome_timeout_raises_when_unfinished():
-    """A future that never resolves raises TaskTimeout from outcome()/result()."""
+def _never_resolving_future():
+    """A bare Future whose done-event is never set — for timeout paths."""
     from pymonik.future import Future
 
     fut: Future[int] = Future.__new__(Future)
@@ -96,6 +96,12 @@ def test_outcome_timeout_raises_when_unfinished():
     fut._cache_key = None
     fut._materialized = False
     fut._materialize_lock = threading.Lock()
+    return fut
+
+
+def test_outcome_timeout_raises_when_unfinished():
+    """A future that never resolves raises TaskTimeout from outcome()/result()."""
+    fut = _never_resolving_future()
 
     with pytest.raises(TaskTimeout):
         fut.outcome(timeout=0.1)
@@ -166,6 +172,35 @@ def test_as_completed_sync():
         assert sorted(f.result() for f in as_completed(fl)) == [0, 2, 4, 6, 8]
 
 
+def test_as_completed_sync_with_timeout_completes():
+    """A generous timeout must not crash or fire when futures resolve in time."""
+    with LocalCluster() as client, client.session() as s:
+        fl = add.map(range(3), range(3))
+        got = sorted(f.result() for f in as_completed(fl, timeout=30.0))
+        assert got == [0, 2, 4]
+
+
+def test_as_completed_sync_timeout_raises():
+    """The timeout is an overall deadline: a stuck future raises TaskTimeout."""
+    stuck = _never_resolving_future()
+    with pytest.raises(TaskTimeout, match="1 of 1 futures unresolved"):
+        for _ in as_completed(stuck, timeout=0.2):
+            pass
+
+
+def test_as_completed_sync_timeout_yields_done_before_raising():
+    """Futures that resolve before the deadline are yielded; only then it raises."""
+    with LocalCluster() as client, client.session() as s:
+        fast = add.spawn(1, 1)
+        fast.result()  # resolved
+        stuck = _never_resolving_future()
+        got = []
+        with pytest.raises(TaskTimeout, match="1 of 2 futures unresolved"):
+            for f in as_completed(fast, stuck, timeout=0.2):
+                got.append(f.result())
+        assert got == [2]
+
+
 # --------------------------------------------------------- MultiResultHandle
 
 
@@ -218,6 +253,51 @@ def test_async_for_as_completed():
                 async for f in as_completed(add.map(range(4), range(4))):
                     got.append(await f)
         assert sorted(got) == [0, 2, 4, 6]
+
+    asyncio.run(_run())
+
+
+def test_async_for_as_completed_with_timeout_completes():
+    """timeout= on the async door must not fire when futures resolve in time."""
+
+    async def _run():
+        got = []
+        async with LocalCluster() as client:
+            async with client.session_async() as s:
+                async for f in as_completed(add.map(range(3), range(3)), timeout=30.0):
+                    got.append(await f)
+        assert sorted(got) == [0, 2, 4]
+
+    asyncio.run(_run())
+
+
+def test_async_for_as_completed_timeout_raises():
+    """The async door honours timeout= as an overall deadline (it used to be
+    silently ignored, hanging forever on an unresolved future)."""
+
+    async def _run():
+        stuck = _never_resolving_future()
+        with pytest.raises(TaskTimeout, match="1 of 1 futures unresolved"):
+            async for _ in as_completed(stuck, timeout=0.2):
+                pass
+
+    asyncio.run(_run())
+
+
+def test_async_for_as_completed_timeout_spans_iteration():
+    """The deadline covers the whole loop — it is not restarted per wave."""
+
+    async def _run():
+        async with LocalCluster() as client:
+            async with client.session_async() as s:
+                fast = add.spawn(1, 1)
+                await fast  # resolved
+                stuck = _never_resolving_future()
+                got = []
+                with pytest.raises(TaskTimeout, match="1 of 2 futures unresolved"):
+                    async for f in as_completed(fast, stuck, timeout=0.2):
+                        got.append(await f)
+                assert got == [2]
 
     asyncio.run(_run())
 
