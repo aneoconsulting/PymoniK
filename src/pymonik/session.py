@@ -108,9 +108,7 @@ class Session:
         self._cache = cache
         # Reuse index (key → existing result_id), colocated with the
         # value cache root. Present whenever caching infra is enabled.
-        self._index: ResultIndex | None = (
-            ResultIndex(cache.root) if cache is not None else None
-        )
+        self._index: ResultIndex | None = ResultIndex(cache.root) if cache is not None else None
         # Existing session id we're attaching to. None = create a fresh
         # session on open. When attached, ``__exit__`` doesn't issue
         # ``close_session()`` — other consumers may still be using the
@@ -221,9 +219,7 @@ class Session:
             # submission RPC will fail clearly enough if it doesn't.
             self._session_id = self._attach_to
             if self._otel_session_span is not None:
-                self._otel_session_span.set_attribute(
-                    "pymonik.session_id", self._session_id
-                )
+                self._otel_session_span.set_attribute("pymonik.session_id", self._session_id)
             log.info(
                 "session attached",
                 session_id=self._session_id,
@@ -247,9 +243,7 @@ class Session:
                 if span is not None:
                     span.set_attribute("pymonik.session_id", self._session_id)
                 if self._otel_session_span is not None:
-                    self._otel_session_span.set_attribute(
-                        "pymonik.session_id", self._session_id
-                    )
+                    self._otel_session_span.set_attribute("pymonik.session_id", self._session_id)
             log.info(
                 "session opened",
                 session_id=self._session_id,
@@ -297,12 +291,7 @@ class Session:
 
         # Don't close the session on exit when we attached — it isn't
         # ours to terminate. Other consumers may still be using it.
-        if (
-            self._session_id
-            and self._sessions
-            and not self._cancelled
-            and self._attach_to is None
-        ):
+        if self._session_id and self._sessions and not self._cancelled and self._attach_to is None:
             try:
                 self._sessions.close_session(self._session_id)
             except Exception as e:
@@ -635,6 +624,13 @@ class Session:
         eff = self._default_opts.merge(task.opts)
         if self._cache is None or self._index is None or eff.cache is not True:
             return {}, list(range(len(normalised))), {}
+        if task.multi_fields:
+            # The index maps one key to one result_id and the hit path
+            # rebinds a plain Future... neither fits a task that produces
+            # N outputs behind a MultiResultHandle (which also has no
+            # _cache_key slot to tag). Uncacheable (for now) until the index learns
+            # per-field entries.
+            return {}, list(range(len(normalised))), {}
 
         import pymonik
 
@@ -776,9 +772,8 @@ class Session:
         def handler(_session_id, event_type, event) -> bool:
             if self._stop.is_set():
                 return True  # break the stream
-            if (
-                event_type == EventTypes.RESULT_STATUS_UPDATE
-                and isinstance(event, ResultStatusUpdateEvent)
+            if event_type == EventTypes.RESULT_STATUS_UPDATE and isinstance(
+                event, ResultStatusUpdateEvent
             ):
                 with self._lock:
                     known = event.result_id in self._pending
@@ -923,9 +918,7 @@ class _ClientBackend:
 
     def upload_payloads(self, named_data: dict[str, bytes]) -> dict[str, str]:
         assert self._s._results is not None
-        m = self._s._results.create_results(
-            results_data=named_data, session_id=self._s.session_id
-        )
+        m = self._s._results.create_results(results_data=named_data, session_id=self._s.session_id)
         return {n: r.result_id for n, r in m.items()}
 
     def submit(

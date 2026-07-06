@@ -746,6 +746,12 @@ class MultiResultHandle:
         across all fields. Sync only — use ``await handle`` from async code.
         """
         _ensure_off_loop("MultiResultHandle.result()")
+        return self._result(timeout)
+
+    def _result(self, timeout: float | None = None) -> MultiResultView:
+        # Same public/private split as Future: FutureList.results() calls
+        # the private door on every element (Future or handle) after doing
+        # the off-loop check once for the whole batch.
         deadline = None if timeout is None else time.monotonic() + timeout
         view: dict[str, Any] = {}
         for field, fut in self._field_to_future.items():
@@ -761,6 +767,9 @@ class MultiResultHandle:
         :class:`MultiResultView`. Never raises on task failure.
         """
         _ensure_off_loop("MultiResultHandle.outcome()")
+        return self._settle(timeout)
+
+    def _settle(self, timeout: float | None = None) -> Outcome[MultiResultView]:
         deadline = None if timeout is None else time.monotonic() + timeout
         settled: list[Outcome[Any]] = []
         for fut in self._field_to_future.values():

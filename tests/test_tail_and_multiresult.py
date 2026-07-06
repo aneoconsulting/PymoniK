@@ -492,6 +492,93 @@ def test_multi_output_runtime_exception_fails_all_fields():
                 handle.a.result(timeout=15)
 
 
+# ---------- multi-output tasks × batch doors ----------
+# .map() of a multi-output task yields a FutureList of MultiResultHandles;
+# every FutureList door and composition helper must accept that mix.
+# results()/outcomes() used to crash with AttributeError (_result/_settle
+# only existed on Future).
+
+
+@task
+def _split(x: int):
+    return MultiResult(double=x * 2, triple=x * 3)
+
+
+def test_multi_output_map_results():
+    with LocalCluster() as client:
+        with client.session():
+            fl = _split.map(range(3))
+            views = fl.results(timeout=15)
+            assert [dict(v) for v in views] == [
+                {"double": 0, "triple": 0},
+                {"double": 2, "triple": 3},
+                {"double": 4, "triple": 6},
+            ]
+
+
+def test_multi_output_map_outcomes():
+    with LocalCluster() as client:
+        with client.session():
+            fl = _split.map(range(2))
+            ocs = fl.outcomes(timeout=15)
+            assert all(oc.ok for oc in ocs)
+            assert [dict(oc.value) for oc in ocs] == [
+                {"double": 0, "triple": 0},
+                {"double": 2, "triple": 3},
+            ]
+
+
+def test_multi_output_map_await():
+    import asyncio
+
+    async def _run():
+        async with LocalCluster() as client:
+            async with client.session_async():
+                views = await _split.map(range(2))
+                assert [dict(v) for v in views] == [
+                    {"double": 0, "triple": 0},
+                    {"double": 2, "triple": 3},
+                ]
+
+    asyncio.run(_run())
+
+
+def test_multi_output_as_completed_and_gather_fan_out_per_field():
+    from pymonik import as_completed, gather
+
+    with LocalCluster() as client:
+        with client.session():
+            fl = _split.map(range(2))
+            # Composition operates per-field: 2 tasks × 2 fields = 4 futures.
+            got = sorted(f.result(timeout=15) for f in as_completed(fl, timeout=15))
+            assert got == [0, 0, 2, 3]
+            assert sorted(gather(fl).results(timeout=15)) == [0, 0, 2, 3]
+
+
+def test_multi_output_cache_decoration_time_rejection():
+    """@task(cache=True) on a multi-output task fails fast at decoration."""
+    with pytest.raises(PymonikError, match="not compatible with"):
+
+        @task(cache=True)
+        def split_cached(x: int):
+            return MultiResult(a=x, b=x + 1)
+
+
+def test_multi_output_cache_via_with_options_does_not_crash(tmp_path):
+    """cache=True reaching a multi-output task past the decoration check
+    (with_options / session default_options) is a no-op, not a crash.
+
+    The reuse index maps one key to one result_id; tagging the handle with
+    _cache_key used to raise AttributeError (no such slot).
+    """
+    with LocalCluster(cache=tmp_path) as client:
+        with client.session():
+            cached = _split.with_options(cache=True)
+            first = dict(cached.spawn(3).result(timeout=15))
+            again = dict(cached.spawn(3).result(timeout=15))
+            assert first == again == {"double": 6, "triple": 9}
+
+
 __all__ = [
     "PymonikConnectionError",
 ]  # silence unused-import warnings

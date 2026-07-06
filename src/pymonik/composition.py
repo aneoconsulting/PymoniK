@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Iterable, Iterator
 from typing import Any
 
 from pymonik.errors import TaskTimeout
-from pymonik.future import Future, FutureList, _ensure_off_loop
+from pymonik.future import Future, FutureList, MultiResultHandle, _ensure_off_loop
 
 # Brief poll interval for sync as_completed when no future has resolved yet.
 # Trade-off: smaller = more responsive, more CPU. 50 ms is invisible in
@@ -31,29 +31,41 @@ _AS_COMPLETED_POLL_S = 0.05
 
 
 def _flatten(items: Iterable[Any]) -> list[Future[Any]]:
-    """Flatten a mix of Futures, FutureLists, and iterables of either."""
-    out: list[Future[Any]] = []
+    """Flatten a mix of Futures, handles, FutureLists, and iterables of either.
+
+    Composition operates at per-field granularity: a ``MultiResultHandle``
+    (bare, or inside a ``FutureList`` from a multi-output ``.map()``) fans
+    out to its per-field Futures. The sync ``as_completed`` door blocks on
+    one done-event per element, which only a ``Future`` has.
+    """
+    shallow: list[Any] = []
     for item in items:
-        if isinstance(item, Future):
-            out.append(item)
+        if isinstance(item, (Future, MultiResultHandle)):
+            shallow.append(item)
         elif isinstance(item, FutureList):
-            out.extend(item)
+            shallow.extend(item)
         elif hasattr(item, "__iter__") and not isinstance(item, (str, bytes)):
             for sub in item:
-                if isinstance(sub, Future):
-                    out.append(sub)
+                if isinstance(sub, (Future, MultiResultHandle)):
+                    shallow.append(sub)
                 elif isinstance(sub, FutureList):
-                    out.extend(sub)
+                    shallow.extend(sub)
                 else:
                     raise TypeError(
-                        f"gather/as_completed: expected Future or FutureList, "
-                        f"got {type(sub).__name__}"
+                        f"gather/as_completed: expected Future, MultiResultHandle "
+                        f"or FutureList, got {type(sub).__name__}"
                     )
         else:
             raise TypeError(
-                f"gather/as_completed: expected Future / FutureList / iterable "
-                f"of Futures, got {type(item).__name__}"
+                f"gather/as_completed: expected Future / MultiResultHandle / "
+                f"FutureList / iterable of those, got {type(item).__name__}"
             )
+    out: list[Future[Any]] = []
+    for f in shallow:
+        if isinstance(f, MultiResultHandle):
+            out.extend(f)  # __iter__ yields the per-field Futures
+        else:
+            out.append(f)
     return out
 
 
