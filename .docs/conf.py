@@ -51,9 +51,9 @@ myst_heading_anchors = 3
 
 # -- Options to show "Edit on GitHub" button ---------------------------------
 html_context = {
-    "display_github": True,  # Integrate GitHub
-    "github_user": "aneoconsulting",  # Username
-    "github_repo": "ArmoniK.Api",  # Repo name
-    "github_version": "main",  # Version
-    "conf_py_path": "/.docs/",  # Path in the checkout to the docs root
+    "display_github": True,
+    "github_user": "aneoconsulting",
+    "github_repo": "PymoniK",
+    "github_version": "main",
+    "conf_py_path": "/.docs/",
 }

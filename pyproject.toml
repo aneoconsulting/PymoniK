@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[project]
+description = "Python framework for writing distributed programs that run on an ArmoniK cluster."
+name = "pymonik"
+# Version is derived from git tags by uv-dynamic-versioning (see
+# [tool.uv-dynamic-versioning]) — there is no hand-maintained version
+# string. Tag a release (e.g. `v1.0.0`) to cut it; in between, builds get a
+# `.postN.devM+<hash>` suffix off the latest tag.
+dynamic = ["version"]
+readme = "README.md"
+requires-python = "==3.11.*" # must match the worker image python
+dependencies = [
+    "armonik>=3.25.0",
+    "anyio>=4.3",
+    "cloudpickle>=3.1",
+    "msgspec>=0.19",
+    "grpcio>=1.60",
+    "structlog>=24.1",
+    "pyyaml>=6.0.3",
+    "click>=8.1",
+    # ``opentelemetry-instrumentation`` (pulled by the [otel] extra)
+    # imports ``pkg_resources`` at module load. setuptools >= 81
+    # dropped it. Pinning here (not in the [otel] extra) ensures
+    # ``uv sync`` without ``--extra otel`` doesn't pull a newer
+    # setuptools that would break the otel install path. Drop when
+    # opentelemetry-instrumentation migrates to importlib.metadata.
+    "setuptools<81",
+    "rich-click>=1.9.7",
+]
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27",
+    # gRPC client instrumentation auto-injects W3C traceparent into
+    # outgoing gRPC metadata; lets ArmoniK.Core's AspNetCore middleware
+    # chain its server-side spans into our trace.
+    "opentelemetry-instrumentation-grpc>=0.48b0",
+]
+# Optional Marimo integration. Pulls anywidget for the
+# custom components and marimo itself for the running_in_notebook
+# detection and mo.ui.anywidget wrapper. The core library imports
+# nothing from these — installation is purely opt-in.
+marimo = ["marimo>=0.10", "anywidget>=0.9", "polars>=1.40.1", "plotly>=6.7.0"]
+mcp = ["mcp"]
+
+[project.scripts]
+pymonik-worker = "pymonik.worker:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pymonik"]
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+# Accept both the bare (`0.1.5`) and `v`-prefixed (`v0.2.0`) tag styles
+# already in this repo. On a tag, the version IS the tag (e.g. `1.0.0rc1`);
+# past a tag it becomes `<tag>.postN.devM+<hash>`.
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11",
+    "pytest>=8",
+    # anyio ships its own pytest plugin; no separate pytest-anyio package.
+    "trio>=0.27",
+    "types-pyyaml>=6.0.12.20260408",
+    # examples/ scripts that exercise the runtime-deps path import these at
+    # module level so cloudpickle ships the function with proper module refs.
+    "numpy>=2",
+    "polars>=1",
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.27.0",
+    "opentelemetry-instrumentation-grpc>=0.48b0",
+    "ty>=0.0.43",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: tests that take more than a few seconds (e.g. real `uv` env builds)",
+    "e2e: tests that require a running ArmoniK cluster (skipped unless AKCONFIG is set / reachable)",
+]
+
+# Python 3.13 cap rationale:
+# `armonik` transitively pulls `grpcio-tools==1.62.3`, whose sdist uses the
+# removed `pkg_resources` stdlib module and fails to build on 3.13. The cap
+# lifts once upstream bumps grpcio-tools (or drops it entirely from runtime
+# deps). Tracked in ../IMPLEMENTATION_PLAN.md §7.
