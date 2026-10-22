@@ -46,6 +46,7 @@ from pymonik._internal.query import (
     _make_context,
 )
 from pymonik._internal.submit import SubmissionBackend, normalise_calls, submit_many
+from pymonik._internal.tracker import TaskTracker
 from pymonik.errors import TaskCancelled, TaskFailed
 from pymonik.future import Future, FutureList
 from pymonik.options import EMPTY, TaskOpts
@@ -88,9 +89,12 @@ class Session:
         cache: ExecCache | None = None,
         attach_to: str | None = None,
         partition_map: Mapping[str, str] | None = None,
+        track_tasks: bool = False,
     ) -> None:
         self._client = client
         self._partition_map = partition_map
+        self._track_tasks = track_tasks
+        self._tracker: TaskTracker | None = None
         # Normalise partitions: first element is the default; the full
         # list is what the session advertises to ArmoniK on create. When
         # attaching to an existing session, the partition list is
@@ -262,6 +266,9 @@ class Session:
                 partitions=tuple(self._partitions),
                 attached=self._attach_to is not None,
             )
+            if self._track_tasks:
+                self._tracker = TaskTracker(self._session_id, channel)
+                self._tracker.start()
 
         # Copy the current ContextVars (including OTel's active span) into
         # the runner thread so any RPC it makes — Events.GetEvents,
@@ -300,6 +307,9 @@ class Session:
                 self._sessions.close_session(self._session_id)
             except Exception as e:
                 log.warning("close_session failed", error=str(e))
+
+        if self._tracker is not None:
+            self._tracker.close()
 
         # End the long-lived OTel session span last so its duration
         # covers everything else.
@@ -420,6 +430,8 @@ class Session:
                 # _resolve_result before our error handler ran; just
                 # register the new one. Retry path is single-output.
                 self._pending[output_ids[0]] = registered_fut
+            if self._tracker is not None:
+                self._tracker.register(registered_fut.task_id)
 
         submit_many(
             task=task,
@@ -749,6 +761,8 @@ class Session:
                         self._pending[oid] = handle._field_to_future[field]
                 else:
                     self._pending[output_ids[0]] = handle
+            if self._tracker is not None:
+                self._tracker.register(handle.task_id)
 
         return submit_many(
             task=task,

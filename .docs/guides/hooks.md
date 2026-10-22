@@ -85,11 +85,32 @@ task, `TaskSubmitted` comes before its other events.
   history, seed from the introspection API (`session.tasks`) and use
   hooks for what happens next.
 
-- **Client-side only.** Tasks a *worker* spawns (`.starmap` / `.tail()`
-  from inside a `@task` on a real cluster) emit on the worker's process,
-  not yours. Observe those via `session.tasks`. (Under `LocalCluster`,
-  everything is in-process, so you see subtasks here too — that's what
-  `created_by` is for.)
+- **Client-side.** Tasks a *worker* spawns (`.starmap` / `.tail()` from
+  inside a `@task` on a real cluster) emit on the worker's process, not
+  yours. `track_tasks=True` (below) reports them here. Under
+  `LocalCluster`, everything is in-process, so you see subtasks here
+  too. That's what `created_by` is for.
+
+## Following tasks on a cluster
+
+```python
+client = PymonikClient(track_tasks=True)   # or PYMONIK_TRACK_TASKS=1
+```
+
+Each session opened while a hook is registered then follows its tasks
+on ArmoniK's events stream and emits:
+
+- `TaskStatusChanged` for every task of the session, with `node` set to
+  the worker pod's hostname and `message` to the worker's error;
+- `TaskSubmitted` for the tasks this client did not submit: sub-tasks
+  and tail calls submitted by workers (`created_by` is the parent), and
+  tasks ArmoniK retries (`attempt` > 1).
+
+Names, partitions, hostnames and errors are not in the events, so the
+session fetches them with batched task listings. When the session
+closes it lists its tasks once more and reports their final state.
+Tasks that other clients submit to an attached session are not
+reported.
 
 ## What it isn't
 

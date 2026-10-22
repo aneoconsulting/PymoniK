@@ -26,9 +26,10 @@ Contract (load-bearing — read before writing a hook):
 - **Live stream, not a log.** Fire-and-forget, no buffering or replay;
   a hook registered after an event fired does not see it. Seed
   authoritative state from the introspection API if you need history.
-- **Client-side only.** Tasks a *worker* spawns (``.starmap`` /
-  ``.tail()`` from inside a ``@task``) emit on the worker's process,
-  not here. Use ``session.tasks`` to observe those.
+- **Client-side.** Tasks a *worker* spawns (``.starmap`` /
+  ``.tail()`` from inside a ``@task``) emit on the worker's process.
+  ``PymonikClient(track_tasks=True)`` reports them here too, with
+  ``TaskStatusChanged`` for every task (``_internal/tracker.py``).
 
 Cost when unused is ~nil: ``emit`` reads one immutable tuple, sees it's
 empty, and returns without constructing an event.
@@ -98,7 +99,8 @@ class TaskStatusChanged(PymonikEvent):
 
     Unlike ``TaskCompleted`` / ``TaskFailed``, which follow the futures
     this client holds, it covers every task of the session, sub-tasks
-    included. ``LocalCluster`` emits it for every task.
+    included. ``LocalCluster`` emits it for every task. A cluster
+    session emits it when the client has ``track_tasks=True``.
     """
 
     task_id: str

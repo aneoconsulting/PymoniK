@@ -82,6 +82,7 @@ class PymonikClient:
         otel: bool | None = None,
         otel_service_name: str = "pymonik",
         partition_map: Mapping[str, str] | None = None,
+        track_tasks: bool | None = None,
     ) -> None:
         """Open a client.
 
@@ -124,6 +125,13 @@ class PymonikClient:
         including tasks that workers submit. Default: the
         ``PYMONIK_PARTITION_MAP`` environment variable
         (``gpu=gpu-a100,*=cpu``).
+
+        ``track_tasks=True`` makes each session opened while a hook is
+        registered follow its tasks on the events stream: it emits
+        ``hooks.TaskStatusChanged`` for every task (with the worker pod's
+        hostname), and ``hooks.TaskSubmitted`` for tasks that workers
+        submit. Costs a second events stream and batched task listings.
+        Default: ``PYMONIK_TRACK_TASKS=1`` in the environment, else off.
         """
         if endpoint is None:
             cfg_path = akconfig or os.getenv("AKCONFIG")
@@ -143,6 +151,9 @@ class PymonikClient:
 
         self.endpoint = endpoint
         self.credentials = credentials
+        if track_tasks is None:
+            track_tasks = os.getenv("PYMONIK_TRACK_TASKS", "").strip().lower() in ("1", "true", "yes")
+        self._track_tasks = track_tasks
         self._partition_map = (
             dict(partition_map)
             if partition_map is not None
@@ -270,6 +281,7 @@ class PymonikClient:
             cache=self._cache,
             attach_to=attach_to,
             partition_map=self._partition_map,
+            track_tasks=self._track_tasks,
         )
 
     # ---- async lifecycle ----
@@ -364,6 +376,7 @@ class PymonikClient:
             cache=self._cache,
             attach_to=attach_to,
             partition_map=self._partition_map,
+            track_tasks=self._track_tasks,
         )
         async with sess:
             yield sess
