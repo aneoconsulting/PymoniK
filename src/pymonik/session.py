@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -31,7 +32,7 @@ import cloudpickle
 
 import pymonik.hooks as hooks
 from pymonik import blob as blob_mod
-from pymonik._internal import _otel
+from pymonik._internal import _otel, partitions
 from pymonik._internal.events import EventStream
 from pymonik._internal.exec_cache import (
     ExecCache,
@@ -86,8 +87,10 @@ class Session:
         spill_threshold: int = _DEFAULT_SPILL_THRESHOLD,
         cache: ExecCache | None = None,
         attach_to: str | None = None,
+        partition_map: Mapping[str, str] | None = None,
     ) -> None:
         self._client = client
+        self._partition_map = partition_map
         # Normalise partitions: first element is the default; the full
         # list is what the session advertises to ArmoniK on create. When
         # attaching to an existing session, the partition list is
@@ -100,6 +103,7 @@ class Session:
             if not parts:
                 raise ValueError("partition list cannot be empty")
             self._partitions = parts
+        self._partitions = partitions.resolve_all(self._partitions, partition_map)
         self._partition = self._partitions[0]
         self._default_opts = default_options
         self._use_events = use_events
@@ -430,6 +434,7 @@ class Session:
             apply_retry_policy=False,  # already on the future from the original submit
             existing_future=fut,
             attempt=fut._retry_attempt + 1,
+            partition_map=self._partition_map,
         )
         log.info(
             "task retried",
@@ -757,6 +762,7 @@ class Session:
             on_submitted=register,
             apply_retry_policy=True,
             attempt=1,
+            partition_map=self._partition_map,
         )
 
     # ---- events stream (default) ----

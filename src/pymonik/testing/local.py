@@ -50,6 +50,7 @@ import anyio
 import cloudpickle
 from pymonik._internal._logging import get_logger
 from armonik.common import TaskDefinition, TaskOptions
+from pymonik._internal import partitions
 from pymonik._internal.envconfig import env_int, env_mapping
 
 import pymonik.hooks as hooks
@@ -178,12 +179,16 @@ class LocalCluster:
         max_workers: int | None = None,
         cache: bool | str | Path | None = None,
         partition_workers: Mapping[str, int] | None = None,
+        partition_map: Mapping[str, str] | None = None,
     ) -> None:
         """``max_workers`` is the size of the thread pool (default 16, or
         ``PYMONIK_LOCAL_WORKERS``). ``partition_workers`` maps a partition
         to the number of its tasks that may run at once, e.g.
         ``{"gpu": 1}`` (default: ``PYMONIK_LOCAL_PARTITION_WORKERS``,
         ``gpu=1,io=2``). Partitions it doesn't list share the pool.
+        ``partition_map`` works as on :class:`pymonik.PymonikClient`
+        (default: ``PYMONIK_PARTITION_MAP``); ``partition_workers`` uses
+        the mapped names.
         """
         if max_workers is None:
             max_workers = env_int("PYMONIK_LOCAL_WORKERS", 16)
@@ -192,6 +197,9 @@ class LocalCluster:
             partition_workers = {k: int(v) for k, v in from_env.items()}
         self._max_workers = max_workers
         self._partition_workers = dict(partition_workers)
+        if partition_map is None:
+            partition_map = env_mapping("PYMONIK_PARTITION_MAP")
+        self._partition_map = dict(partition_map) if partition_map is not None else None
         self._executor: ThreadPoolExecutor | None = None
         self._scheduler: _Scheduler | None = None
         self._cache: ExecCache | None
@@ -325,6 +333,7 @@ class LocalSession:
         cache: ExecCache | None = None,
     ) -> None:
         self._cluster = cluster
+        self._partition_map = cluster._partition_map
         if isinstance(partition, str):
             self._partitions: tuple[str, ...] = (partition,)
         else:
@@ -332,6 +341,7 @@ class LocalSession:
             if not parts:
                 raise ValueError("partition list cannot be empty")
             self._partitions = parts
+        self._partitions = partitions.resolve_all(self._partitions, self._partition_map)
         self._partition = self._partitions[0]
         self._default_opts = default_options
         self._cache = cache
@@ -573,6 +583,7 @@ class LocalSession:
             on_submitted=register_and_launch,
             apply_retry_policy=True,
             attempt=1,
+            partition_map=self._partition_map,
         )
 
     # ---- retry path (same hooks Session uses) ----
@@ -616,6 +627,7 @@ class LocalSession:
                 apply_retry_policy=False,
                 existing_future=fut,
                 attempt=fut._retry_attempt + 1,
+                partition_map=self._partition_map,
             )
 
         retry_ctx = contextvars.copy_context()
@@ -788,9 +800,12 @@ class LocalSession:
 
         from pymonik.envelope import TaskEnvelope
 
+        with partitions.shipping(self._partition_map):
+            function_pickle = cloudpickle.dumps(task.func)
+            args_pickle = cloudpickle.dumps((args_rewritten, kwargs_rewritten))
         envelope = TaskEnvelope(
-            function_pickle=cloudpickle.dumps(task.func),
-            args_pickle=cloudpickle.dumps((args_rewritten, kwargs_rewritten)),
+            function_pickle=function_pickle,
+            args_pickle=args_pickle,
             func_name=task.name,
             attempt=1,
             env_spec=env_spec_obj,
@@ -810,7 +825,8 @@ class LocalSession:
             payload_bytes,
             sorted(set(deps)),
             cancel_ev,
-            merged_opts.partition or self._partition,
+            partitions.resolve(merged_opts.partition or "", self._partition_map)
+            or self._partition,
         )
         log.info(
             "tail submitted (local)",

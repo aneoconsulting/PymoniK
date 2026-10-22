@@ -22,12 +22,15 @@ shapes between branches raise at decoration time.
 from __future__ import annotations
 
 import contextvars
+import copyreg
+import dataclasses
 import functools
 import inspect
 from typing import Any, Callable, Generic, Iterable, ParamSpec, TypeVar, overload
 
 import anyio
 
+from pymonik._internal import partitions
 from pymonik._internal._ast_introspect import extract_multi_fields
 from pymonik._internal.protocols import SubmittableSession
 from pymonik.context import WorkerContext
@@ -118,6 +121,17 @@ class Task(Generic[P, R]):
     # Local call — just runs the function.
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         return self.func(*args, **kwargs)
+
+    def __reduce__(self) -> Any:
+        # Same state as the default slots pickling, so any worker can load it.
+        # During a submission the partition is mapped (see _internal/partitions).
+        state = {name: getattr(self, name) for name in self.__slots__}
+        pmap = partitions.shipping_map()
+        if pmap and self.opts.partition:
+            state["opts"] = dataclasses.replace(
+                self.opts, partition=partitions.resolve(self.opts.partition, pmap)
+            )
+        return (copyreg.__newobj__, (type(self),), (None, state))
 
     def with_options(
         self,

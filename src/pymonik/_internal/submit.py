@@ -28,6 +28,8 @@ attachment) land in one place instead of three.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Protocol
 
 import cloudpickle
@@ -37,7 +39,7 @@ from armonik.common import TaskDefinition, TaskOptions
 import pymonik.hooks as hooks
 from pymonik import context as _ctx
 from pymonik import envelope as env_mod
-from pymonik._internal import _otel
+from pymonik._internal import _otel, partitions
 from pymonik._internal.refs import auto_spill, extract_deps
 from pymonik.envelope import EnvSpec, TaskEnvelope
 from pymonik.errors import PymonikError
@@ -130,6 +132,7 @@ def submit_many(
     apply_retry_policy: bool = True,
     existing_future: Optional[Future[Any]] = None,
     attempt: int = 1,
+    partition_map: Mapping[str, str] | None = None,
 ) -> FutureList:
     """Run the full submission pipeline.
 
@@ -163,6 +166,9 @@ def submit_many(
             one. Single-task, single-output only.
         attempt: envelope ``attempt`` field. 1 for fresh submissions, ≥2
             for retries.
+        partition_map: maps the task's partition name, and the partition
+            names of the Task objects pickled with it (see
+            ``_internal/partitions``).
     """
     normalised = normalise_calls(calls)
     n = len(normalised)
@@ -175,6 +181,10 @@ def submit_many(
     # Validate partition selection BEFORE we hit the network — no point
     # allocating ids for a request that's about to fail.
     merged_opts = default_opts.merge(task.opts)
+    if merged_opts.partition and partition_map:
+        merged_opts = replace(
+            merged_opts, partition=partitions.resolve(merged_opts.partition, partition_map)
+        )
     allowed = backend.allowed_partitions
     if allowed is not None and merged_opts.partition is not None:
         if merged_opts.partition not in allowed:
@@ -232,7 +242,8 @@ def submit_many(
         ]
 
         # 2. Build envelopes per call, collect data deps.
-        fn_pickle = cloudpickle.dumps(task.func)
+        with partitions.shipping(partition_map):
+            fn_pickle = cloudpickle.dumps(task.func)
         payload_blobs: dict[str, bytes] = {}
         payload_names: list[str] = []
         task_deps: list[list[str]] = []
@@ -269,9 +280,11 @@ def submit_many(
                 k: auto_spill(v, deps, upload_blob=blob_uploader, threshold=spill_threshold)
                 for k, v in kwargs_rewritten.items()
             }
+            with partitions.shipping(partition_map):
+                args_pickle = cloudpickle.dumps((args_rewritten, kwargs_rewritten))
             envelope = TaskEnvelope(
                 function_pickle=fn_pickle,
-                args_pickle=cloudpickle.dumps((args_rewritten, kwargs_rewritten)),
+                args_pickle=args_pickle,
                 func_name=task.name,
                 attempt=attempt,
                 env_spec=env_spec,

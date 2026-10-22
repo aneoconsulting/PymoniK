@@ -51,6 +51,29 @@ with client.session(partition=["cpu", "gpu"]) as s:
     fast.spawn(scene)            # raises PymonikError at submit time
 ```
 
+## Mapping partition names
+
+Code written for one cluster names that cluster's partitions. To run it
+on another cluster, give the client a `partition_map`:
+
+```python
+client = PymonikClient(partition_map={
+    "cpu": "cpu", "gpu-a100": "gpu-a100",   # partitions that exist
+    "gpu": "gpu-a100",                       # another name for one
+    "*": "cpu",                              # every other name
+})
+```
+
+A name that is a key maps to its value. With a `"*"` key, every other
+name maps to its value; without it, other names stay as they are. The
+map applies to `session(partition=...)`, `@task(partition=...)` and
+`.with_options(partition=...)`, also for tasks that a task body spawns
+or tail-calls on a worker. Validation and the `TaskSubmitted` hook see
+the mapped names. `LocalCluster(partition_map=...)` takes the same map.
+
+The default is the `PYMONIK_PARTITION_MAP` environment variable, in the
+form `cpu=cpu,gpu=gpu-a100,*=cpu`.
+
 ## When to use this
 
 - **Tasks need different hardware.** GPU tasks on a GPU partition, CPU

@@ -13,6 +13,7 @@ Two front doors, one channel:
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -80,6 +81,7 @@ class PymonikClient:
         cache: bool | str | os.PathLike[str] | None = None,
         otel: bool | None = None,
         otel_service_name: str = "pymonik",
+        partition_map: Mapping[str, str] | None = None,
     ) -> None:
         """Open a client.
 
@@ -113,6 +115,15 @@ class PymonikClient:
         (``OTEL_EXPORTER_OTLP_ENDPOINT`` / ``OTEL_TRACES_EXPORTER``),
         otherwise stays off. ``True`` enables unconditionally; ``False``
         forces off. Requires ``pip install pymonik[otel]``.
+
+        ``partition_map`` maps the partition names a program uses to the
+        cluster's partitions, e.g. ``{"gpu": "gpu-a100", "*": "cpu"}``: a
+        key maps to its value, and with a ``"*"`` key every other name
+        maps to its value. It applies to ``session(partition=...)``,
+        ``@task(partition=...)`` and ``.with_options(partition=...)``,
+        including tasks that workers submit. Default: the
+        ``PYMONIK_PARTITION_MAP`` environment variable
+        (``gpu=gpu-a100,*=cpu``).
         """
         if endpoint is None:
             cfg_path = akconfig or os.getenv("AKCONFIG")
@@ -132,6 +143,11 @@ class PymonikClient:
 
         self.endpoint = endpoint
         self.credentials = credentials
+        self._partition_map = (
+            dict(partition_map)
+            if partition_map is not None
+            else envconfig.env_mapping("PYMONIK_PARTITION_MAP")
+        )
         self._events = events
         self._polling_interval = polling_interval
         self._polling_chunk = polling_chunk
@@ -253,6 +269,7 @@ class PymonikClient:
             spill_threshold=self._spill_threshold,
             cache=self._cache,
             attach_to=attach_to,
+            partition_map=self._partition_map,
         )
 
     # ---- async lifecycle ----
@@ -346,6 +363,7 @@ class PymonikClient:
             spill_threshold=self._spill_threshold,
             cache=self._cache,
             attach_to=attach_to,
+            partition_map=self._partition_map,
         )
         async with sess:
             yield sess
