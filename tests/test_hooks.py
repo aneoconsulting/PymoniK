@@ -190,3 +190,83 @@ def test_task_submitted_reports_the_partition_of_each_task():
         assert [f.result(timeout=10) for f in futs] == [1, 2, 1]
 
     assert seen == [("plain", "cpu"), ("on_gpu", "gpu"), ("plain", "io")]
+
+
+# ---------- task status (LocalCluster) ----------
+
+
+def _statuses(seen):
+    """task_id -> [event kinds / statuses], in emission order."""
+    out: dict[str, list[str]] = {}
+    for ev in seen:
+        if isinstance(ev, hooks.TaskSubmitted):
+            out.setdefault(ev.task_id, []).append("submitted")
+        elif isinstance(ev, hooks.TaskStatusChanged):
+            out.setdefault(ev.task_id, []).append(ev.status)
+    return out
+
+
+def test_localcluster_reports_status_changes_after_submission():
+    seen = []
+    hooks.subscribe(seen.append)
+
+    @task
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    with LocalCluster(max_workers=4) as c, c.session():
+        add.spawn(add.spawn(1, 2), 3).result(timeout=10)
+
+    assert list(_statuses(seen).values()) == [["submitted", "running", "completed"]] * 2
+    running = [e for e in seen if isinstance(e, hooks.TaskStatusChanged) and e.status == "running"]
+    assert all(e.node and e.node.startswith("pymonik-local") for e in running)
+
+
+def test_localcluster_reports_failures_and_their_dependents():
+    seen = []
+    hooks.subscribe(seen.append)
+
+    @task
+    def boom() -> int:
+        raise ValueError("boom")
+
+    @task
+    def inc(x: int) -> int:
+        return x + 1
+
+    with LocalCluster(max_workers=2) as c, c.session():
+        bad = boom.spawn()
+        after = inc.spawn(bad)
+        with pytest.raises(Exception, match="unavailable"):
+            after.result(timeout=10)
+
+    by_task = _statuses(seen)
+    assert by_task[bad.task_id] == ["submitted", "running", "failed"]
+    assert by_task[after.task_id] == ["submitted", "failed"]  # never ran
+    failed = {e.task_id: e.message for e in seen if isinstance(e, hooks.TaskStatusChanged)}
+    assert failed[bad.task_id].startswith("ValueError: boom")
+
+
+def test_localcluster_reports_tail_calls_as_subtasks():
+    seen = []
+    hooks.subscribe(seen.append)
+
+    @task
+    def leaf(x: int) -> int:
+        return x * 2
+
+    @task
+    def parent(x: int) -> int:
+        return leaf.tail(x)
+
+    with LocalCluster(max_workers=2) as c, c.session(partition="cpu"):
+        fut = parent.spawn(4)
+        assert fut.result(timeout=10) == 8
+
+    submitted = [e for e in seen if isinstance(e, hooks.TaskSubmitted)]
+    assert [(e.task_name, e.created_by, e.partition) for e in submitted] == [
+        ("parent", None, "cpu"),
+        ("leaf", fut.task_id, "cpu"),
+    ]
+    assert submitted[1].result_ids == submitted[0].result_ids  # the tail writes the parent's output
+    assert list(_statuses(seen).values()) == [["submitted", "running", "completed"]] * 2

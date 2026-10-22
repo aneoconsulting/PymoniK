@@ -88,6 +88,26 @@ class TaskSubmitted(PymonikEvent):
 
 
 @dataclass(slots=True, frozen=True, kw_only=True)
+class TaskStatusChanged(PymonikEvent):
+    """A task changed state where it runs.
+
+    ``status`` is ``running``, ``completed``, ``failed``, ``cancelled``
+    or ``retried``. ``node`` is where the task runs: the worker pod's
+    hostname on a cluster, the thread name on ``LocalCluster``.
+    ``message`` is the error of a ``failed`` task.
+
+    Unlike ``TaskCompleted`` / ``TaskFailed``, which follow the futures
+    this client holds, it covers every task of the session, sub-tasks
+    included. ``LocalCluster`` emits it for every task.
+    """
+
+    task_id: str
+    status: str
+    node: str | None = None
+    message: str | None = None
+
+
+@dataclass(slots=True, frozen=True, kw_only=True)
 class TaskCompleted(PymonikEvent):
     task_id: str
     result_id: str
@@ -213,6 +233,7 @@ __all__ = [
     "SessionOpened",
     "SessionClosed",
     "TaskSubmitted",
+    "TaskStatusChanged",
     "TaskCompleted",
     "TaskFailed",
     "TaskRetried",

@@ -46,13 +46,22 @@ time a task, diff the `at` of its `TaskSubmitted` and `TaskCompleted`:
 | `SessionOpened` | `partitions`, `attached` |
 | `SessionClosed` | `cancelled` |
 | `TaskSubmitted` | `task_id`, `task_name`, `result_ids`, `data_dependencies`, `partition`, `attempt`, `created_by` |
+| `TaskStatusChanged` | `task_id`, `status`, `node`, `message` |
 | `TaskCompleted` | `task_id`, `result_id` |
 | `TaskFailed` | `task_id`, `result_id`, `error_type`, `message` |
 | `TaskRetried` | `task_id`, `attempt` |
 
 `created_by` on `TaskSubmitted` is the parent task id when the
 submission came from inside a `@task` body (a subtask); `None` for
-ordinary client submissions.
+ordinary client submissions. `partition` is the partition the task is
+routed to.
+
+`TaskCompleted`, `TaskFailed` and `TaskRetried` follow the futures this
+client holds. `TaskStatusChanged` follows the tasks themselves, sub-tasks
+included: `status` is `running`, `completed`, `failed`, `cancelled` or
+`retried`, `node` is where the task runs (the thread name on
+`LocalCluster`), and `message` is the error of a failed task. For each
+task, `TaskSubmitted` comes before its other events.
 
 ## The contract (read before writing a hook)
 

@@ -361,6 +361,8 @@ class LocalSession:
         self._blob_bytes: dict[str, bytes] = {}
         self._result_bytes: dict[str, bytes] = {}
         self._result_events: dict[str, threading.Event] = {}
+        # Output ids of failed tasks -> the error.
+        self._aborted: dict[str, PymonikError] = {}
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
@@ -722,6 +724,29 @@ class LocalSession:
         if scheduler is not None:
             scheduler.wake()
 
+    def _emit_status(self, task_id: str, status: str, message: str | None = None) -> None:
+        if hooks.active():
+            hooks.emit(
+                hooks.TaskStatusChanged,
+                session_id=self._session_id,
+                task_id=task_id,
+                status=status,
+                node=threading.current_thread().name,
+                message=message,
+            )
+
+    def _emit_outcome(self, task_id: str, output_ids: list[str]) -> None:
+        with self._lock:
+            err = next((self._aborted[o] for o in output_ids if o in self._aborted), None)
+        if err is None:
+            self._emit_status(task_id, "completed")
+        elif isinstance(err, TaskCancelled):
+            self._emit_status(task_id, "cancelled")
+        else:
+            self._emit_status(
+                task_id, "failed", getattr(err, "worker_message", None) or str(err)
+            )
+
     def _write_result_bytes(self, output_id: str, pickled: bytes) -> None:
         """Write resolved bytes for one output id and wake any waiters."""
         with self._lock:
@@ -749,6 +774,7 @@ class LocalSession:
         promise: Any,
         *,
         expected_output_ids: list[str],
+        created_by: str | None = None,
     ) -> str:
         """Submit a TailPromise to run with caller-supplied output ids.
 
@@ -819,14 +845,29 @@ class LocalSession:
         with self._lock:
             self._cancel_events[expected_output_ids[0]] = cancel_ev
 
+        partition = (
+            partitions.resolve(merged_opts.partition or "", self._partition_map)
+            or self._partition
+        )
+        if hooks.active():
+            hooks.emit(
+                hooks.TaskSubmitted,
+                session_id=self._session_id,
+                task_id=new_task_id,
+                task_name=task.name,
+                result_ids=tuple(expected_output_ids),
+                multi_fields=tuple(task.multi_fields or ()),
+                data_dependencies=tuple(sorted(set(deps))),
+                partition=partition,
+                created_by=created_by,
+            )
         self._schedule(
             new_task_id,
             list(expected_output_ids),
             payload_bytes,
             sorted(set(deps)),
             cancel_ev,
-            partitions.resolve(merged_opts.partition or "", self._partition_map)
-            or self._partition,
+            partition,
         )
         log.info(
             "tail submitted (local)",
@@ -881,9 +922,7 @@ class LocalSession:
                         ),
                     )
                     return
-            self._submit_tail(
-                result, expected_output_ids=output_ids
-            )
+            self._submit_tail(result, expected_output_ids=output_ids, created_by=task_id)
             return
 
         # ---- multi-output return ----
@@ -929,9 +968,7 @@ class LocalSession:
                     # only that output id; the field's Future is already
                     # registered under `oid`, so the tail dispatch
                     # resolves it when the child writes.
-                    self._submit_tail(
-                        value, expected_output_ids=[oid]
-                    )
+                    self._submit_tail(value, expected_output_ids=[oid], created_by=task_id)
                 elif isinstance(value, Future):
                     self._fail_task(
                         output_ids,
@@ -1017,6 +1054,8 @@ class LocalSession:
                 ff._resolve_error(err)
         # Aborted outputs: tasks that depend on them run and fail at once.
         with self._lock:
+            for oid in output_ids:
+                self._aborted.setdefault(oid, err)
             events = [self._result_events.get(oid) for oid in output_ids]
         for ev in events:
             if ev is not None:
@@ -1090,6 +1129,7 @@ class LocalSession:
             ):
                 from pymonik._internal.subprocess_dispatch import run_in_subprocess
 
+                self._emit_status(task_id, "running")
                 try:
                     pickled = run_in_subprocess(
                         env_spec=envelope.env_spec,
@@ -1217,6 +1257,7 @@ class LocalSession:
                                 },
                                 kind="server",
                             ):
+                                self._emit_status(task_id, "running")
                                 result = func(*args, **kwargs)
                 except TaskCancelled:
                     self._fail_task(output_ids, TaskCancelled(task_id))
@@ -1255,6 +1296,7 @@ class LocalSession:
                 for oid in output_ids:
                     self._cancel_events.pop(oid, None)
             _current_session.reset(sess_token)
+            self._emit_outcome(task_id, output_ids)
 
 
 class _LocalBackend:

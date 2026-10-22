@@ -355,8 +355,6 @@ def submit_many(
                 max_r, on_types, backoff_fn = retry_policy
                 if hasattr(fut, "_retry_state"):
                     fut._retry_state = (task, args, kwargs, max_r, on_types, backoff_fn)
-            if on_submitted is not None:
-                on_submitted(output_ids, fut)
             if emit_hooks:
                 hooks.emit(
                     hooks.TaskSubmitted,
@@ -370,6 +368,10 @@ def submit_many(
                     attempt=attempt,
                     created_by=created_by,
                 )
+            # After the hook: a consumer sees TaskSubmitted before any other
+            # event of the task (LocalCluster starts it here).
+            if on_submitted is not None:
+                on_submitted(output_ids, fut)
             futures.append(fut)
 
         if submit_span is not None and futures:
