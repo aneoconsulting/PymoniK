@@ -735,17 +735,12 @@ class LocalSession:
                 message=message,
             )
 
-    def _emit_outcome(self, task_id: str, output_ids: list[str]) -> None:
+    def _emit_completed(self, task_id: str, output_ids: list[str]) -> None:
+        """At the end of a dispatch: ``completed`` unless ``_fail_task`` reported a failure."""
         with self._lock:
-            err = next((self._aborted[o] for o in output_ids if o in self._aborted), None)
-        if err is None:
+            failed = any(o in self._aborted for o in output_ids)
+        if not failed:
             self._emit_status(task_id, "completed")
-        elif isinstance(err, TaskCancelled):
-            self._emit_status(task_id, "cancelled")
-        else:
-            self._emit_status(
-                task_id, "failed", getattr(err, "worker_message", None) or str(err)
-            )
 
     def _write_result_bytes(self, output_id: str, pickled: bytes) -> None:
         """Write resolved bytes for one output id and wake any waiters."""
@@ -1048,6 +1043,12 @@ class LocalSession:
         handle, or any non-first field, hung. Idempotent: ``_resolve_error``
         no-ops on an already-resolved future.
         """
+        task_id = getattr(err, "task_id", None)
+        if task_id:  # the task's status first, then its futures, as on a cluster
+            if isinstance(err, TaskCancelled):
+                self._emit_status(task_id, "cancelled")
+            else:
+                self._emit_status(task_id, "failed", getattr(err, "worker_message", str(err)))
         for oid in output_ids:
             ff = self._field_future_for(oid)
             if ff is not None:
@@ -1296,7 +1297,7 @@ class LocalSession:
                 for oid in output_ids:
                     self._cancel_events.pop(oid, None)
             _current_session.reset(sess_token)
-            self._emit_outcome(task_id, output_ids)
+            self._emit_completed(task_id, output_ids)
 
 
 class _LocalBackend:

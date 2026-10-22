@@ -245,6 +245,9 @@ def test_localcluster_reports_failures_and_their_dependents():
     assert by_task[after.task_id] == ["submitted", "failed"]  # never ran
     failed = {e.task_id: e.message for e in seen if isinstance(e, hooks.TaskStatusChanged)}
     assert failed[bad.task_id].startswith("ValueError: boom")
+    # the task's status comes before its future's TaskFailed
+    order = [type(e).__name__ for e in seen if getattr(e, "task_id", None) == bad.task_id]
+    assert order == ["TaskSubmitted", "TaskStatusChanged", "TaskStatusChanged", "TaskFailed"]
 
 
 def test_localcluster_reports_tail_calls_as_subtasks():
