@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import grpc
 from pymonik._internal._logging import get_logger
-from armonik.client import ArmoniKEvents, ArmoniKResults, ArmoniKSessions, ArmoniKTasks
+from armonik.client import ArmoniKResults, ArmoniKSessions, ArmoniKTasks
 from armonik.common import EventTypes, Result, ResultStatus, TaskDefinition, TaskOptions
 from armonik.common.events import ResultStatus as EvResultStatus
 from armonik.common.events import ResultStatusUpdateEvent
@@ -32,6 +32,7 @@ import cloudpickle
 import pymonik.hooks as hooks
 from pymonik import blob as blob_mod
 from pymonik._internal import _otel
+from pymonik._internal.events import EventStream
 from pymonik._internal.exec_cache import (
     ExecCache,
     ResultIndex,
@@ -119,7 +120,6 @@ class Session:
         self._sessions: ArmoniKSessions | None = None
         self._tasks: ArmoniKTasks | None = None
         self._results: ArmoniKResults | None = None
-        self._events: ArmoniKEvents | None = None
 
         self._pending: dict[str, Future[Any]] = {}  # result_id -> future
         # Within-session content-addressable blob cache. Keyed by SHA-256
@@ -128,6 +128,7 @@ class Session:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._runner: threading.Thread | None = None
+        self._stream: EventStream | None = None
         self._ctx_token: Any = None
         # Long-lived OTel span covering the whole ``with`` block so
         # every submit / blob upload / future wait inside nests into
@@ -193,7 +194,6 @@ class Session:
         self._sessions = ArmoniKSessions(channel)
         self._tasks = ArmoniKTasks(channel)
         self._results = ArmoniKResults(channel)
-        self._events = ArmoniKEvents(channel)
 
         # Make the OTel auto-detection run before we open the long span,
         # otherwise the span goes to a no-op tracer.
@@ -278,9 +278,9 @@ class Session:
     def _close_resources(self) -> None:
         """Blocking teardown: stop thread, fail pending, close session."""
         self._stop.set()
+        if self._stream is not None:
+            self._stream.cancel()
         if self._runner is not None and self._runner.is_alive():
-            # The events stream is blocking on a server-push; closing the
-            # session below (or the channel on client exit) breaks it out.
             self._runner.join(timeout=2.0)
 
         with self._lock:
@@ -764,33 +764,28 @@ class Session:
     def _events_loop(self) -> None:
         """Run the ``Events.GetEvents`` server-stream and resolve futures.
 
-        Stops when ``self._stop`` is set (on the next event) or when the
-        stream errors out (channel close during shutdown).
+        Stops when ``self._stop`` is set: ``_close_resources`` cancels the
+        stream, which ends the loop at once.
         """
-        assert self._events is not None
-
-        def handler(_session_id, event_type, event) -> bool:
-            if self._stop.is_set():
-                return True  # break the stream
-            if event_type == EventTypes.RESULT_STATUS_UPDATE and isinstance(
-                event, ResultStatusUpdateEvent
-            ):
+        channel = self._client._channel
+        assert channel is not None
+        self._stream = EventStream(channel, self.session_id, [EventTypes.RESULT_STATUS_UPDATE])
+        try:
+            for event_type, event in self._stream:
+                if self._stop.is_set():
+                    return
+                if event_type != EventTypes.RESULT_STATUS_UPDATE or not isinstance(
+                    event, ResultStatusUpdateEvent
+                ):
+                    continue
                 with self._lock:
                     known = event.result_id in self._pending
                 if not known:
-                    return False
+                    continue
                 if event.status == EvResultStatus.COMPLETED:
                     self._resolve_result(event.result_id, ok=True)
                 elif event.status == EvResultStatus.ABORTED:
                     self._resolve_result(event.result_id, ok=False)
-            return False
-
-        try:
-            self._events.get_events(
-                session_id=self.session_id,
-                event_types=[EventTypes.RESULT_STATUS_UPDATE],
-                event_handlers=[handler],
-            )
         except grpc.RpcError as e:
             if not self._stop.is_set():
                 log.warning("events stream terminated", error=str(e))

@@ -47,7 +47,6 @@ def stub_session(monkeypatch):
     monkeypatch.setattr(session_mod, "ArmoniKSessions", lambda _ch: sessions_mock)
     monkeypatch.setattr(session_mod, "ArmoniKTasks", lambda _ch: MagicMock())
     monkeypatch.setattr(session_mod, "ArmoniKResults", lambda _ch: MagicMock())
-    monkeypatch.setattr(session_mod, "ArmoniKEvents", lambda _ch: MagicMock())
 
     yield sessions_mock
 
