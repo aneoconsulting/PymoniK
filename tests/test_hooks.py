@@ -170,3 +170,23 @@ def test_created_by_links_worker_spawned_subtasks():
     parents = set(submitted.values())
     assert None in parents               # basket itself
     assert any(p is not None for p in parents)  # leg children created_by basket
+
+
+def test_task_submitted_reports_the_partition_of_each_task():
+    """The partition a task is routed to: its own option, else the session's default."""
+    seen = []
+    hooks.on(hooks.TaskSubmitted, lambda ev: seen.append((ev.task_name, ev.partition)))
+
+    @task
+    def plain() -> int:
+        return 1
+
+    @task(partition="gpu")
+    def on_gpu() -> int:
+        return 2
+
+    with LocalCluster() as c, c.session(partition=["cpu", "gpu", "io"]):
+        futs = [plain.spawn(), on_gpu.spawn(), plain.with_options(partition="io").spawn()]
+        assert [f.result(timeout=10) for f in futs] == [1, 2, 1]
+
+    assert seen == [("plain", "cpu"), ("on_gpu", "gpu"), ("plain", "io")]

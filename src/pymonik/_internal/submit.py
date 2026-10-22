@@ -353,7 +353,7 @@ def submit_many(
                     result_ids=tuple(output_ids),
                     multi_fields=tuple(task.multi_fields or ()),
                     data_dependencies=tuple(deps),
-                    partition=partition,
+                    partition=merged_opts.partition or partition,
                     attempt=attempt,
                     created_by=created_by,
                 )
