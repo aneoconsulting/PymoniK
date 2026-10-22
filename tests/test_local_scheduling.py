@@ -32,7 +32,7 @@ def tree(lo: int, hi: int) -> int:
 
 
 def test_dynamic_tree_runs_on_two_threads():
-    # Collectors queue behind their own children; they must not hold threads while waiting.
+    # Collectors queue behind their own children. They must not hold threads while waiting.
     with LocalCluster(max_workers=2) as c, c.session():
         assert tree.spawn(0, 32).result(timeout=30) == sum(range(32))
 

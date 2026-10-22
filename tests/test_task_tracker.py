@@ -104,7 +104,7 @@ def test_worker_subtask_is_announced_then_followed(seen):
         ("x",),
         ("r",),
     )
-    assert tr.lookups == [["c"]]  # one lookup; the node is known afterwards
+    assert tr.lookups == [["c"]]  # one lookup, the node is known afterwards
 
 
 def test_own_task_waits_for_registration(seen):

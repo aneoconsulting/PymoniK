@@ -187,7 +187,7 @@ class LocalCluster:
         ``{"gpu": 1}`` (default: ``PYMONIK_LOCAL_PARTITION_WORKERS``,
         ``gpu=1,io=2``). Partitions it doesn't list share the pool.
         ``partition_map`` works as on :class:`pymonik.PymonikClient`
-        (default: ``PYMONIK_PARTITION_MAP``); ``partition_workers`` uses
+        (default: ``PYMONIK_PARTITION_MAP``). ``partition_workers`` uses
         the mapped names.
         """
         if max_workers is None:

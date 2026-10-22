@@ -110,7 +110,7 @@ class TaskTracker:
         except grpc.RpcError as e:
             if not self._closed.is_set():
                 log.warning("task events stream ended", error=str(e))
-        except Exception as e:  # noqa: BLE001 — background thread
+        except Exception as e:  # noqa: BLE001 (background thread)
             log.error("task events stream failed", error=str(e))
 
     def _work(self) -> None:
@@ -123,7 +123,7 @@ class TaskTracker:
                     break
             try:
                 self._handle(batch)
-            except Exception as e:  # noqa: BLE001 — tracking must not stop on one bad batch
+            except Exception as e:  # noqa: BLE001 (one bad batch must not stop tracking)
                 log.warning("task tracking failed", error=str(e))
             for kind, item in batch:
                 if kind == "sync":
@@ -244,7 +244,7 @@ class TaskTracker:
                 chunk = ids[i : i + _LOOKUP_CHUNK]
                 query = TaskQuery(_make_context(self._channel))
                 out.extend(query.where(id__in=chunk).page_size(len(chunk)).list())
-        except Exception as e:  # noqa: BLE001 — report without details
+        except Exception as e:  # noqa: BLE001 (report without details)
             log.debug("task lookup failed", error=str(e))
         return out
 

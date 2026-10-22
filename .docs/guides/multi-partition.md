@@ -65,7 +65,7 @@ client = PymonikClient(partition_map={
 ```
 
 A name that is a key maps to its value. With a `"*"` key, every other
-name maps to its value; without it, other names stay as they are. The
+name maps to its value. Without it, other names stay as they are. The
 map applies to `session(partition=...)`, `@task(partition=...)` and
 `.with_options(partition=...)`, also for tasks that a task body spawns
 or tail-calls on a worker. Validation and the `TaskSubmitted` hook see
