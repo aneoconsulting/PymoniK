@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable, Iterator
-from typing import Any
+from typing import Any, cast
 
 from armonik.client.events import ArmoniKEvents
 from armonik.common import EventTypes
@@ -34,7 +34,7 @@ class EventStream:
         self._stub = EventsStub(channel)
         self._request = EventSubscriptionRequest(
             session_id=session_id,
-            returned_events=list(event_types),
+            returned_events=cast(Any, list(event_types)),
             tasks_filters=TaskFilters(),
             results_filters=ResultFilters(),
         )

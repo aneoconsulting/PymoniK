@@ -1361,7 +1361,7 @@ class _LocalBackend:
                     payload_bytes,
                     list(d.data_dependencies),
                     output_ids,
-                    default_options.partition_id,
+                    default_options.partition_id or self._s._partition,
                 )
         return task_ids
 

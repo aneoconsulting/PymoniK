@@ -22,7 +22,6 @@ shapes between branches raise at decoration time.
 from __future__ import annotations
 
 import contextvars
-import copyreg
 import dataclasses
 import functools
 import inspect
@@ -122,16 +121,18 @@ class Task(Generic[P, R]):
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R:
         return self.func(*args, **kwargs)
 
-    def __reduce__(self) -> Any:
-        # Same state as the default slots pickling, so any worker can load it.
-        # During a submission the partition is mapped (see _internal/partitions).
-        state = {name: getattr(self, name) for name in self.__slots__}
+    def __reduce_ex__(self, protocol: Any) -> Any:
+        # The default pickling, so any worker can load it. During a
+        # submission the partition is mapped (see _internal/partitions).
+        rv = object.__reduce_ex__(self, protocol)
         pmap = partitions.shipping_map()
-        if pmap and self.opts.partition:
-            state["opts"] = dataclasses.replace(
-                self.opts, partition=partitions.resolve(self.opts.partition, pmap)
-            )
-        return (copyreg.__newobj__, (type(self),), (None, state))
+        if not (pmap and self.opts.partition and isinstance(rv, tuple) and len(rv) > 2):
+            return rv
+        state, slots = rv[2]
+        opts = dataclasses.replace(
+            self.opts, partition=partitions.resolve(self.opts.partition, pmap)
+        )
+        return (rv[0], rv[1], (state, {**slots, "opts": opts}), *rv[3:])
 
     def with_options(
         self,
