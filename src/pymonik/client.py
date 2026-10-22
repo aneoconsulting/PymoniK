@@ -22,7 +22,7 @@ import grpc
 from pymonik._internal._logging import get_logger
 import yaml
 
-from pymonik._internal import _otel
+from pymonik._internal import _otel, envconfig
 from pymonik._internal.channel import Credentials, open_channel
 from pymonik._internal.exec_cache import ExecCache, default_cache_dir
 from pymonik._internal.query import (
@@ -54,7 +54,18 @@ class PymonikClient:
         creds = Credentials(ca="ca.pem", cert="me.pem", key="me.key")
         with PymonikClient(endpoint="grpcs://cluster:5001", credentials=creds) as client:
             ...
+
+    With ``PYMONIK_BACKEND=local`` in the environment, ``PymonikClient(...)``
+    returns a :class:`pymonik.testing.LocalCluster` and ignores its
+    arguments: a program runs in-process without code changes.
     """
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        if cls is PymonikClient and envconfig.backend() == "local":
+            from pymonik.testing import LocalCluster
+
+            return LocalCluster()
+        return super().__new__(cls)
 
     def __init__(
         self,

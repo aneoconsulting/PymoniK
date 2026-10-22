@@ -50,6 +50,7 @@ import anyio
 import cloudpickle
 from pymonik._internal._logging import get_logger
 from armonik.common import TaskDefinition, TaskOptions
+from pymonik._internal.envconfig import env_int, env_mapping
 
 import pymonik.hooks as hooks
 from pymonik import context as ctx_mod
@@ -174,17 +175,23 @@ class LocalCluster:
     def __init__(
         self,
         *,
-        max_workers: int = 16,
+        max_workers: int | None = None,
         cache: bool | str | Path | None = None,
         partition_workers: Mapping[str, int] | None = None,
     ) -> None:
-        """``max_workers`` is the size of the thread pool.
-        ``partition_workers`` maps a partition to the number of its tasks
-        that may run at once (e.g. ``{"gpu": 1}``). Partitions it doesn't
-        list share the pool freely.
+        """``max_workers`` is the size of the thread pool (default 16, or
+        ``PYMONIK_LOCAL_WORKERS``). ``partition_workers`` maps a partition
+        to the number of its tasks that may run at once, e.g.
+        ``{"gpu": 1}`` (default: ``PYMONIK_LOCAL_PARTITION_WORKERS``,
+        ``gpu=1,io=2``). Partitions it doesn't list share the pool.
         """
+        if max_workers is None:
+            max_workers = env_int("PYMONIK_LOCAL_WORKERS", 16)
+        if partition_workers is None:
+            from_env = env_mapping("PYMONIK_LOCAL_PARTITION_WORKERS") or {}
+            partition_workers = {k: int(v) for k, v in from_env.items()}
         self._max_workers = max_workers
-        self._partition_workers = dict(partition_workers or {})
+        self._partition_workers = dict(partition_workers)
         self._executor: ThreadPoolExecutor | None = None
         self._scheduler: _Scheduler | None = None
         self._cache: ExecCache | None

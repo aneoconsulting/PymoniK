@@ -27,6 +27,22 @@ def test_add():
 `LocalCluster()` opens a thread pool (default 16 threads); each
 `.spawn()` enqueues the task; the pool runs it.
 
+## Run a program unchanged
+
+Set `PYMONIK_BACKEND=local` and `PymonikClient(...)` returns a
+`LocalCluster` (its connection arguments are ignored). A script written
+for a cluster then runs in-process with no code change:
+
+```sh
+PYMONIK_BACKEND=local python pipeline.py
+```
+
+| Variable | Effect |
+|---|---|
+| `PYMONIK_BACKEND` | `local`: `PymonikClient()` builds a `LocalCluster`. `armonik` (default): the real client. |
+| `PYMONIK_LOCAL_WORKERS` | default `max_workers` of `LocalCluster` (16) |
+| `PYMONIK_LOCAL_PARTITION_WORKERS` | default `partition_workers`, e.g. `gpu=1,io=2` |
+
 ## What's exercised vs. what isn't
 
 `LocalCluster` runs the **same submission pipeline** the real client
