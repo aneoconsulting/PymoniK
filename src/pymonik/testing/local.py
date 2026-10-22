@@ -18,18 +18,19 @@ the result. The wire format is exercised end-to-end in-process — bugs
 in envelope encoding, ref resolution, or auto-spill surface here the
 same way they would on the cluster.
 
+Scheduling follows ArmoniK: a task takes a thread only once all its
+data dependencies exist, and a task that fails aborts its outputs, so
+the tasks that depend on them fail too. ``partition_workers`` caps how
+many tasks of a partition run at once, like the number of workers a
+partition has on a cluster.
+
 What's still local-only:
 
-- No pod scheduling latency, no partition routing, no autoscaling.
+- No pod scheduling latency, no autoscaling.
 - No worker isolation — everything shares the host process.
 - ``max_retries`` (cluster-side, infra-failure retry) isn't emulated;
   client-side retries via ``@task(retry_on=...)`` work end-to-end via
   the same code path the real session uses.
-
-Deadlock note: the executor uses a default of 16 threads. A pipeline
-whose in-flight depth exceeds the pool can deadlock (every thread
-blocked on a data dep whose computation needs another thread). Pass
-``LocalCluster(max_workers=N)`` for deeper graphs.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from __future__ import annotations
 import contextvars
 import hashlib
 import threading
+from collections.abc import Callable, Mapping
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -76,6 +78,83 @@ class _FakeTaskHandler:
         self.session_id = session_id
 
 
+class _Job:
+    """One task waiting for the thread pool."""
+
+    __slots__ = ("session", "deps", "partition", "cancel_ev", "run")
+
+    def __init__(
+        self,
+        session: LocalSession,
+        deps: list[str],
+        partition: str,
+        cancel_ev: threading.Event,
+        run: Callable[[], None],
+    ) -> None:
+        self.session = session
+        self.deps = deps
+        self.partition = partition
+        self.cancel_ev = cancel_ev
+        self.run = run
+
+    def ready(self) -> bool:
+        return self.cancel_ev.is_set() or all(self.session._input_ready(r) for r in self.deps)
+
+
+class _Scheduler:
+    """Hands a job to the thread pool once its inputs exist and its
+    partition has a free worker."""
+
+    def __init__(self, executor: ThreadPoolExecutor, partition_workers: Mapping[str, int]) -> None:
+        self._executor = executor
+        self._limits = dict(partition_workers)
+        self._busy: dict[str, int] = {}
+        self._waiting: list[_Job] = []
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def submit(self, job: _Job) -> None:
+        with self._lock:
+            self._waiting.append(job)
+        self.wake()
+
+    def wake(self) -> None:
+        """Start every waiting job that can run. Call when an input may have appeared."""
+        start: list[_Job] = []
+        with self._lock:
+            if self._closed:
+                return
+            waiting: list[_Job] = []
+            for job in self._waiting:
+                busy = self._busy.get(job.partition, 0)
+                limit = self._limits.get(job.partition)
+                if (limit is None or busy < limit) and job.ready():
+                    self._busy[job.partition] = busy + 1
+                    start.append(job)
+                else:
+                    waiting.append(job)
+            self._waiting = waiting
+        for job in start:
+            try:
+                self._executor.submit(self._run, job)
+            except RuntimeError:  # the pool is shut down
+                return
+
+    def _run(self, job: _Job) -> None:
+        try:
+            job.run()
+        finally:
+            with self._lock:
+                self._busy[job.partition] -= 1
+            self.wake()
+
+    def close(self) -> None:
+        """Drop the waiting jobs. Running ones finish."""
+        with self._lock:
+            self._closed = True
+            self._waiting.clear()
+
+
 class LocalCluster:
     """Drop-in for ``PymonikClient`` that runs tasks in a thread pool.
 
@@ -97,9 +176,17 @@ class LocalCluster:
         *,
         max_workers: int = 16,
         cache: bool | str | Path | None = None,
+        partition_workers: Mapping[str, int] | None = None,
     ) -> None:
+        """``max_workers`` is the size of the thread pool.
+        ``partition_workers`` maps a partition to the number of its tasks
+        that may run at once (e.g. ``{"gpu": 1}``). Partitions it doesn't
+        list share the pool freely.
+        """
         self._max_workers = max_workers
+        self._partition_workers = dict(partition_workers or {})
         self._executor: ThreadPoolExecutor | None = None
+        self._scheduler: _Scheduler | None = None
         self._cache: ExecCache | None
         if cache is None or cache is False:
             self._cache = None
@@ -112,15 +199,21 @@ class LocalCluster:
 
     # ---- sync lifecycle ----
 
-    def __enter__(self) -> "LocalCluster":
+    def _start(self) -> None:
         self._executor = ThreadPoolExecutor(
             max_workers=self._max_workers,
             thread_name_prefix="pymonik-local",
         )
+        self._scheduler = _Scheduler(self._executor, self._partition_workers)
+
+    def __enter__(self) -> "LocalCluster":
+        self._start()
         log.info("local cluster started", max_workers=self._max_workers, mode="sync")
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        if self._scheduler is not None:
+            self._scheduler.close()
         if self._executor is not None:
             self._executor.shutdown(wait=True)
             self._executor = None
@@ -160,14 +253,13 @@ class LocalCluster:
     # ---- async lifecycle ----
 
     async def __aenter__(self) -> "LocalCluster":
-        self._executor = ThreadPoolExecutor(
-            max_workers=self._max_workers,
-            thread_name_prefix="pymonik-local",
-        )
+        self._start()
         log.info("local cluster started", max_workers=self._max_workers, mode="async")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._scheduler is not None:
+            self._scheduler.close()
         if self._executor is not None:
             await anyio.to_thread.run_sync(self._executor.shutdown)
             self._executor = None
@@ -540,6 +632,7 @@ class LocalSession:
         if rev is not None:
             rev.set()
         fut._resolve_error(TaskCancelled(fut.task_id))
+        self._wake()
 
     def cancel(self) -> None:
         """Cancel this in-process session. Same shape as Session.cancel."""
@@ -555,6 +648,7 @@ class LocalSession:
             ev.set()
         for fut in pending:
             fut._resolve_error(TaskCancelled(fut.task_id))
+        self._wake()
 
     # LocalCluster has no real session-lifecycle RPCs, but we mirror the
     # cluster Session's verb set so the same code runs in both places.
@@ -575,6 +669,39 @@ class LocalSession:
         )
 
     # ---- dispatcher (worker-equivalent for one task) ----
+
+    def _schedule(
+        self,
+        task_id: str,
+        output_ids: list[str],
+        payload_bytes: bytes,
+        data_dep_ids: list[str],
+        cancel_ev: threading.Event,
+        partition: str,
+    ) -> None:
+        """Queue one task: it runs once its inputs exist and its partition has a free worker."""
+        scheduler = self._cluster._scheduler
+        assert scheduler is not None, "LocalCluster is not running"
+        scheduler.submit(
+            _Job(
+                self,
+                data_dep_ids,
+                partition,
+                cancel_ev,
+                lambda: self._dispatch(task_id, output_ids, payload_bytes, data_dep_ids, cancel_ev),
+            )
+        )
+
+    def _input_ready(self, result_id: str) -> bool:
+        """True once ``result_id`` has bytes, was aborted, or is unknown (the dispatch fails it)."""
+        with self._lock:
+            ev = self._result_events.get(result_id)
+        return ev is None or ev.is_set()
+
+    def _wake(self) -> None:
+        scheduler = self._cluster._scheduler
+        if scheduler is not None:
+            scheduler.wake()
 
     def _write_result_bytes(self, output_id: str, pickled: bytes) -> None:
         """Write resolved bytes for one output id and wake any waiters."""
@@ -670,15 +797,13 @@ class LocalSession:
         with self._lock:
             self._cancel_events[expected_output_ids[0]] = cancel_ev
 
-        executor = self._cluster._executor
-        assert executor is not None, "LocalCluster is not running"
-        executor.submit(
-            self._dispatch,
+        self._schedule(
             new_task_id,
             list(expected_output_ids),
             payload_bytes,
             sorted(set(deps)),
             cancel_ev,
+            merged_opts.partition or self._partition,
         )
         log.info(
             "tail submitted (local)",
@@ -867,6 +992,13 @@ class LocalSession:
             ff = self._field_future_for(oid)
             if ff is not None:
                 ff._resolve_error(err)
+        # Aborted outputs: tasks that depend on them run and fail at once.
+        with self._lock:
+            events = [self._result_events.get(oid) for oid in output_ids]
+        for ev in events:
+            if ev is not None:
+                ev.set()
+        self._wake()
 
     def _dispatch(
         self,
@@ -897,29 +1029,23 @@ class LocalSession:
             return
 
         try:
-            # Build the data_deps dict by waiting for each upstream result.
-            data_deps: dict[str, bytes] = {}
-            for rid in data_dep_ids:
-                with self._lock:
-                    ev = self._result_events.get(rid)
-                if ev is not None:
-                    ev.wait()
-                with self._lock:
-                    if rid in self._result_bytes:
-                        data_deps[rid] = self._result_bytes[rid]
-                    elif rid in self._blob_bytes:
-                        data_deps[rid] = self._blob_bytes[rid]
-                    else:
-                        # Upstream cancelled or missing.
-                        self._fail_task(
-                            output_ids,
-                            TaskFailed(task_id, f"upstream {rid} unavailable"),
-                        )
-                        return
-
             if cancel_ev.is_set():
                 self._fail_task(output_ids, TaskCancelled(task_id))
                 return
+
+            # The scheduler starts a task once its inputs exist.
+            data_deps: dict[str, bytes] = {}
+            for rid in data_dep_ids:
+                with self._lock:
+                    data = self._result_bytes.get(rid, self._blob_bytes.get(rid))
+                if data is None:
+                    # Upstream failed, cancelled or missing.
+                    self._fail_task(
+                        output_ids,
+                        TaskFailed(task_id, f"upstream {rid} unavailable"),
+                    )
+                    return
+                data_deps[rid] = data
 
             # Decode the envelope and resolve refs.
             try:
@@ -950,11 +1076,12 @@ class LocalSession:
                         session_id=self._session_id,
                     )
                 except TaskFailed as e:
-                    fut._resolve_error(e)
+                    self._fail_task(output_ids, e)
                     return
                 except Exception as e:
-                    fut._resolve_error(
-                        TaskFailed(task_id, f"local subprocess dispatch failed: {e!r}")
+                    self._fail_task(
+                        output_ids,
+                        TaskFailed(task_id, f"local subprocess dispatch failed: {e!r}"),
                     )
                     return
                 # Subprocess path is single-output (multi-output is rejected
@@ -1122,8 +1249,8 @@ class _LocalBackend:
 
     def __init__(self, session: LocalSession) -> None:
         self._s = session
-        # primary_output_id -> (task_id, payload_bytes, data_dep_ids, all_output_ids)
-        self._dispatches: dict[str, tuple[str, bytes, list[str], list[str]]] = {}
+        # primary_output_id -> (task_id, payload_bytes, data_dep_ids, all_output_ids, partition)
+        self._dispatches: dict[str, tuple[str, bytes, list[str], list[str], str]] = {}
 
     @property
     def session_id(self) -> str:
@@ -1169,6 +1296,7 @@ class _LocalBackend:
                     payload_bytes,
                     list(d.data_dependencies),
                     output_ids,
+                    default_options.partition_id,
                 )
         return task_ids
 
@@ -1184,18 +1312,11 @@ class _LocalBackend:
         dispatch = self._dispatches.pop(primary, None)
         if dispatch is None:
             return
-        task_id, payload_bytes, data_dep_ids, all_output_ids = dispatch
+        task_id, payload_bytes, data_dep_ids, all_output_ids, partition = dispatch
         cancel_ev = threading.Event()
         with self._s._lock:
             for oid in all_output_ids:
                 self._s._cancel_events[oid] = cancel_ev
-        executor = self._s._cluster._executor
-        assert executor is not None, "LocalCluster is not running"
-        executor.submit(
-            self._s._dispatch,
-            task_id,
-            all_output_ids,
-            payload_bytes,
-            data_dep_ids,
-            cancel_ev,
+        self._s._schedule(
+            task_id, all_output_ids, payload_bytes, data_dep_ids, cancel_ev, partition
         )

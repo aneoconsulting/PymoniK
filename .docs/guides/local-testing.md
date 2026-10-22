@@ -46,7 +46,8 @@ the cluster.
 
 What's local-only:
 
-- No pod scheduling latency, no partition routing, no autoscaling.
+- No pod scheduling latency, no autoscaling. Partitions only matter
+  for `partition_workers` (below).
 - No worker isolation — every task runs in the host process.
 - ArmoniK's cluster-side `max_retries` (infra-failure retries) isn't
   emulated. Client-side `@task(retry_on=...)` retries *do* run end-to-
@@ -90,18 +91,28 @@ the install; subsequent ones reuse the env.
 `PYMONIK_ENVS_ROOT` defaults to `~/.cache/pymonik/envs`; override per
 test so runs don't pollute each other.
 
-## Multi-task pool sizing
+## Scheduling
 
-Default is 16 worker threads. A pipeline with deeper in-flight depth
-can deadlock — every thread parks waiting for an upstream that needs
-a thread to compute. Increase the pool for deep DAGs:
+Tasks are scheduled as on ArmoniK:
+
+- A task takes a thread only once all its data dependencies exist.
+  Tasks that wait for inputs hold no thread, so deep or dynamic graphs
+  (sub-tasks, tail calls) run on a small pool.
+- A task that fails aborts its outputs. The tasks that depend on them
+  fail too, with `TaskFailed("... upstream <id> unavailable")`.
+
+`max_workers` (default 16) is how many tasks run at once.
+`partition_workers` caps one partition, like the number of workers it
+has on the cluster. Use it for code that is not thread-safe:
 
 ```python
-LocalCluster(max_workers=64)
+with LocalCluster(max_workers=8, partition_workers={"gpu": 1}) as client:
+    with client.session(partition=["cpu", "gpu"]) as s:
+        ...  # at most one "gpu" task at a time
 ```
 
-(The deadlock is a known limitation of the in-process dispatcher;
-a future anyio refactor will drop it.)
+A task that blocks on `.result()` of a task of its own partition holds
+one of that partition's slots while it waits.
 
 ## Cache and OTel
 
